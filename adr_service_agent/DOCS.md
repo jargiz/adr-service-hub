@@ -21,7 +21,26 @@ Use Refresh results to see the outlet verification after 15, 30, and 60 seconds.
 Check the TV itself to confirm the Apple TV is operating normally. Outlet status
 does not establish device reachability, successful boot, HDMI output or playback.
 
-This version has no phone voice connection, cloud access, or other integrations.
+## Sonos checks (0.2.0)
+
+Select **Check Sonos** in the Web UI. The app reads the player states reported
+by your installed Sonos integration without sending playback, volume, mute,
+grouping, or other Sonos control commands. No extra configuration is required.
+
+This update enables Home Assistant Core API access, using an internally supplied
+token. Home Assistant's grant is broader than read-only; this Sonos connector
+uses only entity discovery and individual state reads. The app has no Supervisor
+administration API access. No manually entered token is needed.
+
+Source, title and artist appear when reported. Missing values show Not reported.
+Group members are displayed by player name where available. A failed read clears
+old Sonos results; failure of one player does not erase readings for the others.
+
+These readings may be cached by Home Assistant. The snapshot retrieval time and
+HA last-update time are displayed separately; neither proves audible output.
+No Sonos playback history or track details are written to the app service log.
+
+This version has no phone voice connection or external cloud access.
 No Home Assistant configuration, automations or existing integrations are edited.
 All credentials stay in app configuration; include them only in protected backups.
 

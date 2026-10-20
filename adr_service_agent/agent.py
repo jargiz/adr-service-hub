@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
+from sonos import collect as collect_sonos, SonosError
 
 
 def atomic_json(path, value):
@@ -71,6 +72,8 @@ class Pilot:
         self.candidates = {}
         self.result = "Ready for an on-demand check. No device commands have been sent by starting the app."
         self.inventory = None
+        self.sonos = None
+        self.sonos_error = None
         self.active = False
         self.last_attempt = 0
         self.cooldown_error = False
@@ -87,6 +90,15 @@ class Pilot:
     def ready(self):
         if self.config is None:
             raise ProtocolError(self.config_error)
+
+    def check_sonos(self):
+        self.sonos = None
+        self.sonos_error = None
+        try:
+            self.sonos = collect_sonos()
+            self.audit('sonos_status_read', f"{len(self.sonos['players'])} player(s)")
+        except SonosError as exc:
+            self.sonos_error = str(exc)
 
     def box(self):
         self.ready()
@@ -194,8 +206,32 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>WattBox pilot · 0.1.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>WattBox and Sonos pilot · 0.2.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
+    text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
+    text += form('sonos', 'Check Sonos')
+    if pilot.sonos_error:
+        text += '<p>' + esc(pilot.sonos_error) + '</p>'
+    if pilot.sonos is not None:
+        report = pilot.sonos
+        names = {p['entity_id']: p['name'] for p in report['players']}
+        text += '<p>Snapshot retrieved: ' + esc(report['checked_at']) + '</p>'
+        if not report['players']:
+            text += '<p>No enabled Sonos media-player entities were discovered. Check the Sonos integration in Devices &amp; services.</p>'
+        if report['truncated']:
+            text += '<p>Showing the first 32 of ' + esc(report['discovered_count']) + ' discovered players.</p>'
+        for p in report['players']:
+            mute = 'Yes' if p['muted'] is True else 'No' if p['muted'] is False else 'Not reported'
+            volume = str(p['volume']) + '%' if p['volume'] is not None else 'Not reported'
+            group = ', '.join(str(names.get(m, m)) for m in p['group_members']) if p['group_members'] else 'Not reported'
+            text += '<h3>' + esc(p['name']) + '</h3><table>'
+            for label, value in [('Reported state', p['state']), ('Muted', mute), ('Volume', volume),
+                ('Source', p['source']), ('Track / program', p['title']), ('Artist', p['artist']),
+                ('Group members', group), ('Last HA state update', p['ha_last_updated'])]:
+                text += '<tr><th>' + esc(label) + '</th><td>' + esc(value if value is not None else 'Not reported') + '</td></tr>'
+            text += '</table><p>' + esc(p['note']) + '</p>'
+        text += '<p>These are Home Assistant states, not direct network tests. “Playing” does not prove sound is reaching the speakers. State-update time is not a device heartbeat. No Sonos commands were sent.</p>'
+    text += '</section>'
     if pilot.config is None:
         return text + '<section><p>' + esc(pilot.config_error) + '</p></section></main></html>'
     c = pilot.config
@@ -218,7 +254,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<section><h2>Test reboot</h2><p>Confirm that this outlet powers only the named test device.</p>'
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
-    text += '<p><small>On-demand local pilot. Voice access and other equipment integrations are not connected in this version.</small></p></main></html>'
+    text += '<p><small>On-demand local pilot. Phone voice access is not connected in this version.</small></p></main></html>'
     return text
 
 
@@ -264,7 +300,11 @@ class Handler(BaseHTTPRequestHandler):
         if not 0 < length <= 4096 or self.headers.get('Content-Type', '').split(';')[0] != 'application/x-www-form-urlencoded':
             self.send_error(400)
             return
-        params = parse_qs(self.rfile.read(length).decode('utf-8'), max_num_fields=8)
+        try:
+            params = parse_qs(self.rfile.read(length).decode('utf-8'), max_num_fields=8)
+        except (UnicodeDecodeError, ValueError):
+            self.send_error(400)
+            return
         csrf = params.get('csrf', [''])[0]
         pilot = self.server.pilot
         if not secrets.compare_digest(csrf, pilot.csrf):
@@ -280,6 +320,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_page()
                 elif action == 'check':
                     self.send_page(confirmation=pilot.check())
+                elif action == 'sonos':
+                    pilot.check_sonos()
+                    self.send_page()
                 elif action == 'reboot':
                     if params.get('confirm') != ['yes']:
                         raise ProtocolError('Confirm the outlet mapping before rebooting')
@@ -299,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.1.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.2.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

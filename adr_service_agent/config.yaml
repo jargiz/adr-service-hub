@@ -1,7 +1,7 @@
 name: ADR Service Agent
-version: "0.1.0"
+version: "0.2.0"
 slug: adr_service_agent
-description: "WattBox checks and one confirmed test-outlet reboot. Experimental pilot."
+description: "WattBox test-outlet reboot and read-only Sonos diagnostics. Experimental pilot."
 arch:
   - aarch64
   - amd64
@@ -14,7 +14,7 @@ ingress_port: 8099
 panel_icon: mdi:tools
 panel_title: ADR Service
 panel_admin: true
-homeassistant_api: false
+homeassistant_api: true
 hassio_api: false
 host_network: false
 options:

@@ -1,6 +1,7 @@
 # ADR Service Hub pilot
 
-Version 0.1.0 is a local Home Assistant app for a single WattBox test device.
+Version 0.2.0 is a local Home Assistant app for a single WattBox test device
+and read-only Sonos diagnostics.
 It is the first equipment connector, not the completed phone voice assistant.
 
 ## Included
@@ -11,14 +12,21 @@ It is the first equipment connector, not the completed phone voice assistant.
 - One selected outlet, exact expected label, fresh state check, and explicit confirmation before RESET.
 - Five-minute persisted reboot cooldown; never automatically resends a reset.
 - Outlet power verification at 15, 30 and 60 seconds after acknowledgement.
-- Private app data and service event history. No Home Assistant configuration mounts, Docker socket, host privileges, Home Assistant API, or Supervisor API access.
+- On-demand Sonos snapshots: reported playback, mute, volume, source, track,
+  group members and Home Assistant update time. Discovers enabled Sonos media
+  players through the entity registry and reads only their individual states.
+- Private app data and service event history. No Home Assistant configuration
+  mounts, Docker socket, host privileges, or Supervisor administration API access.
+- Home Assistant Core API access uses the internal Supervisor-provided token.
+  This grant is broader than read-only; the Sonos connector implements only
+  registry discovery and GET state reads. It never calls services or writes states.
 
 ## Not included yet
 
-Phone AI/voice connection, multi-client enrollment, external API access, Sonos,
+Phone AI/voice connection, multi-client enrollment, external API access,
 network-controller diagnostics, Crestron, Control4, Lutron, automatic recovery,
-and Apple TV functional/reachability tests. Existing integrations are unaffected
-by design because this app does not access them. Resource sharing on the Green
+and Apple TV functional/reachability tests. Existing integrations are not
+reconfigured; Sonos data is read through Home Assistant. Resource sharing on the Green
 still requires a real-device trial.
 
 ## Installation once this source is hosted
@@ -42,7 +50,26 @@ still requires a real-device trial.
    reported power state, not a successful Apple TV restart or working playback.
 
 User supplies all credentials in Home Assistant, never in chat or GitHub.
-The app does not need a Home Assistant token or a Proxmox connection.
+The app does not need a manually entered Home Assistant token or a Proxmox connection.
+
+## Sonos diagnostics
+
+After updating to 0.2.0, start the app and choose **Check Sonos** in its Web UI.
+No changes to the existing Sonos integration or WattBox configuration are needed.
+Only players identified by Home Assistant as Sonos entities are queried. Data
+stays inside the app's in-memory page state and is not sent to an external AI.
+The service event log records only the check time and number of players.
+
+A snapshot is a read of Home Assistant's cached/reported states, not a forced
+device refresh or direct network test. Last state update is not a heartbeat.
+“Playing” does not establish audible output; a Sonos Port's external amplifier
+and speakers remain unverified. Missing readings remain unknown. Up to 32
+players are read per check; larger installations show an explicit limit notice.
+
+Version 0.1.0 was subsequently reported working by the pilot user on Green with
+the WB-800VPS-IPVM-18, including outlet inventory and an outlet 11 reset. This
+is a user-reported live test, not an independently observed result. Version
+0.2.0 still requires a live Sonos trial.
 
 ## Removing the pilot
 
@@ -55,10 +82,9 @@ and backup behavior. Protect backups because app options include the password.
 
 Run `python -m unittest discover -s tests -v` after installing
 `adr_service_agent/requirements.txt` in a test environment.
-Tests use simulated responses, not a live WattBox. No Docker runtime or Green
-was available during initial development: container build, ARM execution,
-SSH handshake quirks on the installed firmware, ingress routing and live reset
-behavior must be verified at the pilot installation.
+Tests use simulated responses, not live equipment. No Docker runtime or Green
+is available in the development environment. The next update must build on the
+Green and its new Sonos connector must be checked against the live integration.
 
 Protocol reference: Snap One WattBox Integration Protocol v2.4:
 https://www.snapav.com/wcsstore/ExtendedSitesCatalogAssetStore/attachments/documents/PowerManagement/ProtocolsAndDrivers/SnapAV_Wattbox_API_V2.4.pdf

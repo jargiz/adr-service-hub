@@ -437,7 +437,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.10.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.10.1</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -507,11 +507,17 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     if pilot.cp4:
         text += form('cp4-report', 'Download CP4-R report')
         text += '<p>Completed: ' + esc(pilot.cp4['checked_at']) + ' · SSH authenticated · CP4-R model ' + ('identified' if pilot.cp4['model_verified'] else 'unverified') + '</p>'
+        version_data = pilot.cp4.get('versions', {})
+        if version_data:
+            text += '<table><tr><th>Version reading</th><th>Reported value</th></tr>'
+            for key, label in [('hardware_version', 'Hardware version'), ('control_engine_version', 'Control-engine firmware'), ('home_setup_program_version', 'Home setup-program version')]:
+                text += '<tr><td>' + esc(label) + '</td><td>' + esc(version_data.get(key) or 'Not reported') + '</td></tr>'
+            text += '</table>'
         for item in pilot.cp4['readings']:
             text += '<details><summary>' + esc(item['name']) + ' · ' + esc(item['status']) + '</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['response'] or 'No response captured.') + '</pre></details>'
         for note in pilot.cp4['not_attempted']:
             text += '<p>' + esc(note) + '</p>'
-    text += '<p>Reads processor version and supported diagnostic commands. IP-table results cover only that table, not the full Home device-health inventory. Unsupported metrics remain unverified. No restart or configuration commands are implemented.</p></section>'
+    text += '<p>Reads processor version and supported diagnostic commands. IP-table and main Cresnet results cover those device lists, not the full Home device-health inventory. Unsupported metrics remain unverified. No restart or configuration commands are implemented.</p></section>'
     text += '<section><h2>Crestron discovery</h2><p>Inspect your existing Crestron integration in Home Assistant. No additional processor credentials are needed.</p>'
     extra = ''
     c_report = pilot.crestron
@@ -859,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.10.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.10.1 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

@@ -13,8 +13,8 @@ class CP4Error(ProtocolError):
     pass
 
 
-HELP_COMMANDS = ('UPTIME ?', 'CPULOAD ?', 'RAMFREE ?')
-READ_COMMANDS = ('VER -V', 'HELP ALL', 'IPTABLE -p:all -t', 'UPTIME', 'CPULOAD', 'RAMFREE')
+HELP_COMMANDS = ('UPTIME ?', 'CPULOAD ?', 'RAMFREE ?', 'IPTABLE ?', 'PROGUPTIME ?', 'SYSTEMREADY ?', 'REPORTCRESNET ?', 'TOP ?')
+READ_COMMANDS = ('VER -V', 'HELP ALL', 'IPTABLE', 'UPTIME', 'CPULOAD', 'RAMFREE', 'PROGUPTIME', 'SYSTEMREADY', 'REPORTCRESNET', 'TOP')
 ALLOWED = frozenset(READ_COMMANDS + HELP_COMMANDS)
 
 
@@ -98,7 +98,24 @@ def advertised(text, command):
 
 
 def rejected(text):
-    return bool(re.search(r'(?i)(invalid command|unknown command|unrecognized command|bad command|command not found|access denied)', text))
+    return bool(re.search(r'(?i)(invalid command|unknown command|unrecognized command|bad(?: or incomplete)? command|invalid application id|command not found|access denied)', text))
+
+
+def display_command(help_all, command):
+    line = re.search(r'(?im)^\s*' + re.escape(command) + r'\b[^\n]*', help_all)
+    return bool(line and re.search(r'(?i)\b(display|displays|show|shows|print|prints|list|lists|report|reports)\b', line.group())
+        and not re.search(r'(?i)\b(set|change|configure|clear|reset|reboot|erase|restart|write|start|stop|enable|disable)\b', line.group()))
+
+
+def versions(text):
+    patterns = {'hardware_version': r'(?:Hardware Version:\s*|HW Ver )(\d+)',
+        'control_engine_version': r'Cntrl Eng \[v([^\s,\]]+)',
+        'home_setup_program_version': r'(?m)^PYNG-HUB-SetupProgram:\s*(\S+)'}
+    result = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.I)
+        result[key] = match.group(1) if match else None
+    return result
 
 
 def collect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
@@ -108,8 +125,8 @@ def collect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
     result = {'checked_at': None, 'ssh_authenticated': False, 'model_verified': False,
         'readings': [], 'not_attempted': [], 'limitations': [
             'SSH authentication is a fresh communication check, not proof of all Crestron Home functions.',
-            'IP-table entries cover only registered/configured IP-table devices; this is not the full Crestron Home Device Health dashboard.',
-            'CPU/memory/uptime reads are attempted only when advertised by this processor and their help permits a query.',
+            'IP-table and main Cresnet results cover only those device lists; this is not the full Crestron Home Device Health dashboard.',
+            'Resource reads require advertised display-command semantics and acceptable help syntax. TOP may return a bounded partial process sample; it is not a sustained CPU assessment.',
             'Missing, unsupported or partial results remain unverified. No automatic retries, restarts, resets or configuration writes.']}
     try:
         client.load_host_keys(str(keys_path))
@@ -127,6 +144,7 @@ def collect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
             result['readings'].append(item)
             return text, partial
         version, partial = run('Processor version', 'VER -V')
+        result['versions'] = versions(version)
         result['model_verified'] = bool(re.search(r'(?i)\bCP4[- ]?R\b', console.welcome + '\n' + version))
         if partial or not result['model_verified']:
             result['not_attempted'].append('Further checks stopped: incomplete version response or CP4-R model not identified.')
@@ -135,24 +153,36 @@ def collect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
             if partial:
                 result['not_attempted'].append('Further checks stopped after incomplete console help.')
             else:
-                if advertised(commands, 'IPTABLE'):
-                    run('IP-table connectivity', 'IPTABLE -p:all -t')
-                else:
-                    result['not_attempted'].append('IPTABLE was not advertised by this processor.')
-                for name in ('UPTIME', 'CPULOAD', 'RAMFREE'):
+                for name, title in (
+                        ('SYSTEMREADY', 'System-ready status'),
+                        ('UPTIME', 'System uptime'),
+                        ('PROGUPTIME', 'Home program uptime'),
+                        ('RAMFREE', 'Available RAM'),
+                        ('IPTABLE', 'IP-table connectivity'),
+                        ('REPORTCRESNET', 'Main Cresnet devices'),
+                        ('CPULOAD', 'CPU load'),
+                        ('TOP', 'Process/CPU snapshot')):
                     if not console.ready:
                         result['not_attempted'].append(name + ': earlier response incomplete.')
                         continue
                     if not advertised(commands, name):
                         result['not_attempted'].append(name + ': not advertised by this processor.')
                         continue
+                    if not display_command(commands, name):
+                        result['not_attempted'].append(name + ': command purpose needs verification.')
+                        continue
+                    if name in ('IPTABLE', 'SYSTEMREADY', 'REPORTCRESNET'):
+                        # These no-argument display queries are documented or
+                        # explicitly described by this processor's HELP ALL.
+                        text, partial = run(title, name)
+                        if not partial and rejected(text):
+                            run(name + ' syntax', name + ' ?')
+                        continue
                     help_text, partial = run(name + ' syntax', name + ' ?')
-                    # Decline controls, ambiguous help, and commands that would
-                    # require starting/stopping measurements or setting options.
-                    query_help = re.search(r'(?i)\b(display|displays|show|shows|return|returns|report|reports)\b', help_text)
                     controls = re.search(r'(?i)\b(clear|reset|reboot|erase|restart|write|start|stop|enable|disable)\b', help_text)
-                    if not partial and not rejected(help_text) and query_help and not controls:
-                        run(name + ' reading', name)
+                    required = re.search(r'(?i)(arguments? required|parameters? required|mandatory|must specify)', help_text)
+                    if not partial and not rejected(help_text) and not controls and not required:
+                        run(title, name)
                     else:
                         result['not_attempted'].append(name + ': query syntax needs verification; help captured.')
         result['checked_at'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
@@ -170,5 +200,5 @@ def collect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
 
 
 def report_payload(result):
-    return {'format': 'adr-cp4-diagnostics-v1', 'agent_version': '0.10.0',
+    return {'format': 'adr-cp4-diagnostics-v1', 'agent_version': '0.10.1',
         'read_only': True, 'source': 'direct_processor_ssh', 'snapshot': result}

@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.10.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.10.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -286,3 +286,19 @@ Primary references:
 - https://docs.crestron.com/en-us/8559/Content/Topics/Reference/Architecture.htm
 - https://www.crestron.com/Products/Catalog/Control-and-Management/Control-System/Residential/CP4-R
 - https://docs.crestron.com/en-us/8559/content/topics/Reference/Program-Management.htm
+
+### CP4-R observed console syntax (0.10.1)
+
+Use bare IPTABLE instead of all-program options rejected by the Home processor.
+Classify Bad or Incomplete Command / Invalid Application Id responses as errors.
+Accept the actual UPTIME no-parameters help and RAMFREE optional-flag help using
+read-only purpose confirmed by HELP ALL. Add advertised SYSTEMREADY, PROGUPTIME,
+REPORTCRESNET and TOP display queries. TOP is last and bounded; an incomplete
+process snapshot closes the connection without sending further commands.
+CPU, uptime, RAM, program-uptime and TOP help are captured before execution.
+CPULOAD remains unattempted when absent. No arbitrary arguments are accepted.
+
+The output now distinguishes hardware, control-engine and Home setup-program
+versions. The pilot verified CP4-R HW2, control-engine 2.8000.00057 and Home
+setup program 4.012.0168. Do not confuse those version namespaces or infer update
+availability. New display queries still need live validation.

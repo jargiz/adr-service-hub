@@ -1,3 +1,11 @@
+# 0.10.1
+
+- Use the Home processor's bare IP-table query and classify console rejections correctly.
+- Accept observed uptime/RAM help without requiring redundant description words.
+- Add advertised system-ready, program-uptime, Cresnet and bounded process/CPU reads.
+- Distinguish control-engine firmware from Home setup-program and hardware versions.
+- Revised display reads require live validation; no control commands added.
+
 # 0.10.0
 
 - Add optional direct CP4-R SSH connection with separate explicit host-key trust.

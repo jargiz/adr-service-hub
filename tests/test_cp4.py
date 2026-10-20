@@ -34,17 +34,17 @@ class CP4Tests(unittest.TestCase):
     def test_fixed_reads_follow_supported_help_with_one_login(self):
         replies = [('CP4-R>', False), ('CP4-R firmware test-version\nCP4-R>', False),
             ('IPTABLE   Displays table\nUPTIME    Displays uptime\nCPULOAD    Displays load\nRAMFREE    Displays free RAM\nCP4-R>', False),
+            ('UPTIME: no parameters needed\nCP4-R>', False), ('Uptime: test-time\nCP4-R>', False),
+            ('RAMFree [-x]\n-x - Attribute reclaimable memory to a separate field.\nCP4-R>', False), ('RAM: test-value\nCP4-R>', False),
             ('IP table entries\nCP4-R>', False),
-            ('UPTIME: Displays uptime.\nCP4-R>', False), ('Uptime: test-time\nCP4-R>', False),
-            ('CPULOAD: Displays CPU usage.\nCP4-R>', False), ('CPU: test-value\nCP4-R>', False),
-            ('RAMFREE: Displays available RAM.\nCP4-R>', False), ('RAM: test-value\nCP4-R>', False)]
+            ('CPULOAD: Displays CPU usage.\nCP4-R>', False), ('CPU: test-value\nCP4-R>', False)]
         result, client = self.run_fixture(replies)
         self.assertTrue(result['model_verified'])
         self.assertTrue(result['ssh_authenticated'])
-        self.assertEqual(result['not_attempted'], [])
+        self.assertTrue(all('not advertised' in note for note in result['not_attempted']))
         commands = [call.args[0] for call in client.invoke_shell.return_value.sendall.call_args_list]
-        self.assertEqual(commands, [b'VER -V\r', b'HELP ALL\r', b'IPTABLE -p:all -t\r',
-            b'UPTIME ?\r', b'UPTIME\r', b'CPULOAD ?\r', b'CPULOAD\r', b'RAMFREE ?\r', b'RAMFREE\r'])
+        self.assertEqual(commands, [b'VER -V\r', b'HELP ALL\r', b'UPTIME ?\r', b'UPTIME\r',
+            b'RAMFREE ?\r', b'RAMFREE\r', b'IPTABLE\r', b'CPULOAD ?\r', b'CPULOAD\r'])
         client.connect.assert_called_once()
         client.close.assert_called_once()
         self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
@@ -59,21 +59,50 @@ class CP4Tests(unittest.TestCase):
 
     def test_partial_response_prevents_any_later_commands(self):
         result, client = self.run_fixture([('CP4-R>', False), ('CP4-R firmware\nCP4-R>', False),
-            ('IPTABLE  Displays table\nUPTIME  Displays uptime\nCP4-R>', False),
+            ('IPTABLE  Displays table\nCP4-R>', False),
             ('unfinished table', True)])
         commands = [call.args[0] for call in client.invoke_shell.return_value.sendall.call_args_list]
-        self.assertEqual(commands, [b'VER -V\r', b'HELP ALL\r', b'IPTABLE -p:all -t\r'])
+        self.assertEqual(commands, [b'VER -V\r', b'HELP ALL\r', b'IPTABLE\r'])
         self.assertEqual(result['readings'][-1]['status'], 'partial response')
 
     def test_control_or_ambiguous_help_not_executed(self):
         result, client = self.run_fixture([('CP4-R>', False), ('CP4-R firmware\nCP4-R>', False),
-            ('CPULOAD   Load query\nRAMFREE   Memory query\nCP4-R>', False),
+            ('CPULOAD   Displays load\nRAMFREE   Shows memory\nCP4-R>', False),
             ('CPULOAD: Start or stop CPU measurement display.\nCP4-R>', False),
             ('RAMFREE: Arguments required.\nCP4-R>', False)])
         commands = [call.args[0] for call in client.invoke_shell.return_value.sendall.call_args_list]
         self.assertNotIn(b'CPULOAD\r', commands)
         self.assertNotIn(b'RAMFREE\r', commands)
         self.assertTrue(any('syntax needs verification' in note for note in result['not_attempted']))
+
+    def test_observed_uptime_ram_and_home_table_rejection_with_new_reads(self):
+        help_all = 'SYSTEMREADY  Operator  Display the system ready status\nUPTIME  Operator  Display the time the system is running\nPROGUPTIME  Operator  (*) Display the time the program is running\nRAMFree  Operator  Show available RAM file space\nIPTable  Operator  Display IP Table\nREPORTCRESNET  Operator  Show all devices on the main cresnet leg\nTOP  Operator  Lists processes and threads in system\nCP4-R>'
+        replies = [('CP4-R>', False), ('CP4-R (HW Ver 2) Cntrl Eng [v2.8000.00057]\nPYNG-HUB-SetupProgram: 4.012.0168\nCP4-R>', False),
+            (help_all, False), ('System ready: true\nCP4-R>', False),
+            ('UPTIME \n\tno parameters needed\nCP4-R>', False), ('Uptime: test-time\nCP4-R>', False),
+            ('PROGUPTIME: no parameters needed\nCP4-R>', False), ('Program uptime: test-time\nCP4-R>', False),
+            ('RAMFree [-x]\n-x - Attribute reclaimable memory to the reclaimable field and not to free memory.\nCP4-R>', False), ('Available RAM: test-value\nCP4-R>', False),
+            ('Bad or Incomplete Command ( Invalid Application Id specified )\nCP4-R>', False), ('IPTable: application-specific syntax\nCP4-R>', False),
+            ('Cresnet devices: none\nCP4-R>', False), ('TOP: displays processes\nCP4-R>', False), ('CPU/process snapshot', True)]
+        result, client = self.run_fixture(replies)
+        by_command = {item['command']: item for item in result['readings']}
+        self.assertEqual(by_command['UPTIME']['status'], 'response received')
+        self.assertEqual(by_command['RAMFREE']['status'], 'response received')
+        self.assertEqual(by_command['IPTABLE']['status'], 'unsupported or denied')
+        self.assertIn('IPTABLE ?', by_command)
+        self.assertIn('SYSTEMREADY', by_command)
+        self.assertIn('REPORTCRESNET', by_command)
+        self.assertEqual(by_command['TOP']['status'], 'partial response')
+        self.assertTrue(any('CPULOAD: not advertised' in note for note in result['not_attempted']))
+        self.assertEqual(result['versions'], {'hardware_version': '2',
+            'control_engine_version': '2.8000.00057', 'home_setup_program_version': '4.012.0168'})
+        self.assertNotIn(b'IPTABLE -p:all -t\r', [call.args[0] for call in client.invoke_shell.return_value.sendall.call_args_list])
+        client.close.assert_called_once()
+
+    def test_mixed_view_set_command_purpose_not_accepted(self):
+        self.assertFalse(cp4.display_command('COMMAND Operator Get/Set configuration', 'COMMAND'))
+        self.assertFalse(cp4.display_command('REBOOT Operator Restart system', 'REBOOT'))
+        self.assertTrue(cp4.display_command('SYSTEMREADY Operator Display the system ready status', 'SYSTEMREADY'))
 
     def test_unknown_commands_and_arguments_cannot_be_sent(self):
         client = Mock()

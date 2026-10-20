@@ -1,3 +1,11 @@
+# 0.8.1
+
+- Normalize terminal controls before recognizing pager/help response boundaries.
+- Prioritize system, resource, power/PoE and concise interface-status checks.
+- Defer verbose interface reads and omit redundant env-all component reads.
+- Keep the existing read-only limits and credential protections.
+- Live timing and complete-report validation remain pending.
+
 # 0.8.0
 
 - Add one-run, bounded read-only command discovery from supported CLI help.

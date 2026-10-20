@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.8.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.8.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -210,3 +210,13 @@ options, credentials, saved SSH keys and other connectors' data. The configured
 Araknis password is redacted from response values. The download requires HA
 ingress and a valid CSRF-protected form. No new app permissions are required.
 Live discovery/export validation remains pending.
+
+### Discovery collection fixes (0.8.1)
+
+Normalize terminal escape/control characters before detecting pager and help
+prompts, avoiding a full receive timeout at each formatted prompt. Prioritize
+system, environment-all, power/PoE and concise interface-status paths. Defer
+verbose interface details/counters until the other discovery paths finish.
+Avoid redundant individual CPU/RAM/fan/flash reads once env all is captured.
+The same read-only allowlist, authentication and collection limits apply.
+Live validation of the timing changes remains pending.

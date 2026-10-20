@@ -342,7 +342,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.8.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.8.1</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -653,7 +653,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.8.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.8.1 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

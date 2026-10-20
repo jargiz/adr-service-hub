@@ -77,6 +77,56 @@ class DiscoveryTests(unittest.TestCase):
                 'show interfaces status | include secret', 'configure terminal']:
             self.assertFalse(araknis.permitted_request(command), command)
 
+    def test_formatted_pager_returns_after_idle_instead_of_four_seconds(self):
+        clock = [0.0]
+        channel = Mock()
+        channel.closed = False
+        channel.recv_ready.side_effect = [True] + [False] * 200
+        channel.recv.return_value = b'port details\r\n\x1b[7m--More--\x1b[0m\b\b'
+        def sleep(seconds): clock[0] += seconds
+        with patch('araknis.time.monotonic', side_effect=lambda: clock[0]), patch('araknis.time.sleep', side_effect=sleep):
+            text, partial = araknis.receive(channel)
+        self.assertTrue(text.endswith('--More--'))
+        self.assertFalse(partial)
+        self.assertLess(clock[0], 1.0)
+
+    def test_help_prompt_with_pending_command_returns_early(self):
+        clock = [0.0]
+        channel = Mock()
+        channel.closed = False
+        channel.recv_ready.side_effect = [True] + [False] * 200
+        channel.recv.return_value = b'<CR>    Execute\r\n\x1b[0m(switch)# show power inline'
+        def sleep(seconds): clock[0] += seconds
+        with patch('araknis.time.monotonic', side_effect=lambda: clock[0]), patch('araknis.time.sleep', side_effect=sleep):
+            text, partial = araknis.receive(channel)
+        self.assertIn('show power inline', text)
+        self.assertFalse(partial)
+        self.assertLess(clock[0], 1.0)
+
+    def test_power_and_concise_ports_precede_verbose_details(self):
+        calls = []
+        help_text = {
+            'show system': 'information    Details',
+            'show env': 'all    Everything\nCPU    CPU only\nRAM    RAM only',
+            'show power': 'detail    Detailed power\ninline    PoE power',
+            'show poe': 'port    Port info',
+            'show interfaces': '<CR>    Full details\nstatus    Brief status',
+        }
+        def request(config, keys, command, factory, reader, help_only=False):
+            calls.append((command, help_only))
+            if help_only:
+                return help_text.get(command, '<CR>    Execute'), False
+            return 'reading\n(switch)#', False
+        with patch('araknis.diagnostic_request', side_effect=request):
+            result = araknis.discover(self.config, self.keys)
+        actual = [command for command, help_only in calls if not help_only]
+        self.assertLess(actual.index('show power inline'), actual.index('show interfaces'))
+        self.assertLess(actual.index('show interfaces status'), actual.index('show interfaces'))
+        self.assertIn('show env all', actual)
+        self.assertNotIn('show env CPU', actual)
+        self.assertNotIn('show env RAM', actual)
+        self.assertFalse(result['discovery']['limit_reached'])
+
     def test_export_redacts_nested_password_and_preserves_json(self):
         secret = 'quoted"secret\\value'
         payload = araknis.report_payload({'readings': [{'response': 'value ' + secret}],

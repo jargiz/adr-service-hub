@@ -27,6 +27,17 @@ def settings(options):
     return {'host': host, 'port': port, 'username': username, 'password': password}
 
 
+def terminal_text(raw):
+    value = raw.decode('utf-8', errors='replace') if isinstance(raw, bytes) else raw
+    value = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', value)
+    return ''.join(c for c in value if c in '\n\t' or ord(c) >= 32).strip()
+
+
+def response_boundary(value):
+    return value.rstrip().endswith('--More--') or bool(re.search(
+        r'(?:^|\n)[^\n]{0,80}[#>](?:[ \t]+show(?:[ \t]+[A-Za-z0-9-]+)*)?\s*$', value))
+
+
 def receive(channel, duration=4):
     deadline = time.monotonic() + duration
     data = bytearray()
@@ -45,16 +56,11 @@ def receive(channel, duration=4):
         elif channel.closed:
             break
         else:
-            tail = bytes(data[-256:]).decode('utf-8', errors='replace')
-            if data and time.monotonic() - last_data >= 0.25 and (
-                    tail.rstrip().endswith('--More--') or
-                    re.search(r'(?:^|\n)[^\n]{0,80}[#>]\s*$', tail)):
+            tail = terminal_text(bytes(data[-2048:]))
+            if data and time.monotonic() - last_data >= 0.25 and response_boundary(tail):
                 break
             time.sleep(0.05)
-    value = bytes(data[:32768]).decode('utf-8', errors='replace')
-    value = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', value)
-    value = ''.join(c for c in value if c in '\n\t' or ord(c) >= 32).strip()
-    return value, truncated
+    return terminal_text(bytes(data[:32768])), truncated
 
 
 def show_help(channel, read_fn=receive):
@@ -254,7 +260,8 @@ def discover(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
     """Bounded help traversal; execute only allowlisted paths advertising <cr>."""
     if not keys_path.exists():
         raise AraknisError('Inspect and approve the Araknis SSH identity first.')
-    queue = ['show ' + family for family in DISCOVERY_WORDS]
+    queue = ['show ' + family for family in ('system', 'env', 'power', 'poe', 'interfaces')]
+    deferred = []
     seen = set()
     probes, readings = [], []
     deadline = time.monotonic() + deadline_seconds
@@ -262,11 +269,44 @@ def discover(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
     def report(message):
         if progress:
             progress(message)
+    priorities = {'show system information': 10, 'show env all': 11,
+        'show power detail': 12, 'show power inline': 13, 'show poe port': 14,
+        'show interfaces status': 15, 'show env power': 16, 'show env temperature': 17}
+    def priority(command):
+        return 0 if len(command.split()) == 2 else priorities.get(command, 30)
     try:
-        while queue:
+        while queue or deferred:
             if len(probes) >= max_probes or time.monotonic() >= deadline:
                 limited = True
                 break
+            # Verbose interface details cannot consume the budget before
+            # system, environment, power, and concise port-status discovery.
+            if not queue:
+                if len(readings) >= max_reads or time.monotonic() >= deadline:
+                    limited = True
+                    break
+                command = deferred.pop(0)
+                report('Reading ' + command)
+                item = {'name': command[5:], 'command': command,
+                    'status': 'response received', 'response': '', 'help': '',
+                    'truncated': False, 'error': ''}
+                try:
+                    response, partial = diagnostic_request(config, keys_path, command,
+                        client_factory, read_fn)
+                    item['response'] = response.replace(config['password'], '[redacted]')
+                    item['truncated'] = partial
+                    if command == 'show interfaces':
+                        item['ports'] = parse_interfaces(item['response'])
+                    if not response or re.search(r'(?i)(incomplete command|invalid (input|command)|ambiguous command|unrecognized command|unknown command|syntax error|%\s*error)', response):
+                        item['status'] = 'command needs verification'
+                except (paramiko.BadHostKeyException, paramiko.AuthenticationException):
+                    raise
+                except Exception:
+                    item['status'] = 'read failed'
+                    item['error'] = 'Independent SSH read failed; no automatic retry.'
+                readings.append(item)
+                continue
+            queue.sort(key=priority)
             command = queue.pop(0)
             if command in seen or not permitted_request(command):
                 continue
@@ -286,6 +326,17 @@ def discover(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
                         if child not in seen and child not in queue and permitted_request(child):
                             queue.append(child)
                 if re.search(r'(?im)^\s*<cr>(?:\s|$)', text) and not truncated:
+                    if command in ('show interfaces', 'show interfaces counters', 'show interfaces statistics'):
+                        deferred.append(command)
+                        probes.append(probe)
+                        continue
+                    # env all already contains CPU/RAM/fan/thermal readings.
+                    if command.startswith('show env ') and command != 'show env all' and any(
+                            item['command'] == 'show env all' and item['status'] == 'response received'
+                            for item in readings) and command not in ('show env power', 'show env temperature'):
+                        probe['note'] = 'Individual read omitted because env all was captured.'
+                        probes.append(probe)
+                        continue
                     if len(readings) >= max_reads or time.monotonic() >= deadline:
                         limited = True
                     else:
@@ -316,7 +367,7 @@ def discover(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
         return {'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'report_type': 'read_only_discovery', 'readings': readings,
             'discovery': {'probes': probes, 'limit_reached': limited,
-                'remaining_paths': len(queue), 'max_probes': max_probes, 'max_reads': max_reads,
+                'remaining_paths': len(queue) + len(deferred), 'max_probes': max_probes, 'max_reads': max_reads,
                 'note': 'Unvisited paths and commands needing numeric arguments remain unverified. Resource thresholds are not current utilization. Counters are cumulative.'}}
     except paramiko.BadHostKeyException:
         raise AraknisError('Araknis SSH identity changed. Check the switch identity before reconnecting.') from None
@@ -333,7 +384,7 @@ def report_payload(result, password):
         if isinstance(value, dict):
             return {key: clean(item) for key, item in value.items()}
         return value
-    return {'format': 'adr-araknis-discovery-v1', 'agent_version': '0.8.0',
+    return {'format': 'adr-araknis-discovery-v1', 'agent_version': '0.8.1',
         'read_only': True, 'snapshot': clean(result),
         'limitations': ['Command syntax and raw values are reported, not a health verdict.',
             'No running configuration, app options, credentials or SSH keys are included.',

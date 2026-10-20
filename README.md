@@ -1,7 +1,7 @@
 # ADR Service Hub pilot
 
-Version 0.2.0 is a local Home Assistant app for a single WattBox test device
-and read-only Sonos diagnostics.
+Version 0.3.0 is a local Home Assistant app for a single WattBox test device,
+read-only Sonos diagnostics and Ruckus integration/presence diagnostics.
 It is the first equipment connector, not the completed phone voice assistant.
 
 ## Included
@@ -24,7 +24,7 @@ It is the first equipment connector, not the completed phone voice assistant.
 ## Not included yet
 
 Phone AI/voice connection, multi-client enrollment, external API access,
-network-controller diagnostics, Crestron, Control4, Lutron, automatic recovery,
+direct network-controller diagnostics, Crestron, Control4, Lutron, automatic recovery,
 and Apple TV functional/reachability tests. Existing integrations are not
 reconfigured; Sonos data is read through Home Assistant. Resource sharing on the Green
 still requires a real-device trial.
@@ -70,6 +70,25 @@ Version 0.1.0 was subsequently reported working by the pilot user on Green with
 the WB-800VPS-IPVM-18, including outlet inventory and an outlet 11 reset. This
 is a user-reported live test, not an independently observed result. Version
 0.2.0 still requires a live Sonos trial.
+
+## Ruckus diagnostics (0.3.0)
+
+Choose **Check Ruckus** to discover Home Assistant Ruckus entries, select the
+current entry, then choose **Check Ruckus** again. The selection is saved only
+inside the ADR app; no HA configuration or Ruckus setting is changed.
+
+The app lists each entry's reported setup state and queries only enabled
+device_tracker, sensor and binary_sensor entities belonging to the selected
+Ruckus platform and config entry. Failed or disabled entries do not supply
+current entity readings. Saved inventory (name/model/manufacturer) is displayed
+separately, since it does not prove live AP health. Up to 64 entities are read;
+an explicit notice appears if more are available. Presence status is not a
+signal-strength, bandwidth, switch-port or internet test. Ruckus credentials,
+raw integration configuration and direct controller sessions are not accessed.
+
+The selected-entry ID is saved locally; network and presence readings remain in
+memory only. The service log contains check time and reading count, not client
+MACs, addresses or presence history. No new API permission is added in 0.3.0.
 
 ## Removing the pilot
 

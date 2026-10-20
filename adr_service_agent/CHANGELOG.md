@@ -1,3 +1,14 @@
+# 0.3.0
+
+- Add read-only Ruckus diagnostics with explicit config-entry selection.
+- Show HA entry state, saved integration device inventory and supported reported
+  entity states for only the selected Ruckus entry.
+- Retain selection in this app's private data; never rename, reload, disable or
+  delete Home Assistant integrations or devices.
+- Exclude retained entity readings when an entry is failed or disabled.
+- Clearly separate reported presence and inventory from live network/AP health.
+- Add six simulated tests; live Ruckus display testing remains pending.
+
 # 0.2.0
 
 - Add on-demand read-only Sonos diagnostics through the installed Home Assistant

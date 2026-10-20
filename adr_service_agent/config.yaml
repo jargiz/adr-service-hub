@@ -1,7 +1,7 @@
 name: ADR Service Agent
-version: "0.2.0"
+version: "0.3.0"
 slug: adr_service_agent
-description: "WattBox test-outlet reboot and read-only Sonos diagnostics. Experimental pilot."
+description: "WattBox test reboot, Sonos states and Ruckus presence diagnostics. Experimental pilot."
 arch:
   - aarch64
   - amd64

@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
+from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 
 
 def atomic_json(path, value):
@@ -74,6 +75,14 @@ class Pilot:
         self.inventory = None
         self.sonos = None
         self.sonos_error = None
+        self.ruckus = None
+        self.ruckus_error = None
+        self.ruckus_entries = []
+        self.ruckus_selection = ''
+        try:
+            self.ruckus_selection = json.loads((self.data / 'ruckus_selection.json').read_text())['entry_id']
+        except (OSError, ValueError, KeyError):
+            pass
         self.active = False
         self.last_attempt = 0
         self.cooldown_error = False
@@ -90,6 +99,28 @@ class Pilot:
     def ready(self):
         if self.config is None:
             raise ProtocolError(self.config_error)
+
+    def check_ruckus(self, entry_id=''):
+        self.ruckus = None
+        self.ruckus_error = None
+        self.ruckus_entries = []
+        try:
+            token = token_value()
+            self.ruckus_entries = ruckus_entries(token)
+            selected = entry_id or self.ruckus_selection
+            valid = {e['entry_id'] for e in self.ruckus_entries}
+            if selected not in valid:
+                self.ruckus_selection = ''
+                return
+            self.ruckus = collect_ruckus(selected, token=token,
+                entries_fn=lambda _: self.ruckus_entries)
+            self.ruckus_selection = selected
+            atomic_json(self.data / 'ruckus_selection.json', {'entry_id': selected})
+            self.audit('ruckus_status_read', f"{len(self.ruckus['entities'])} reading(s)")
+        except RuckusError as exc:
+            self.ruckus_error = str(exc)
+        except Exception:
+            self.ruckus_error = 'Could not read Ruckus integration status. No device or configuration changes were sent.'
 
     def check_sonos(self):
         self.sonos = None
@@ -206,7 +237,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>WattBox and Sonos pilot · 0.2.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>WattBox, Sonos and Ruckus pilot · 0.3.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
@@ -231,6 +262,38 @@ def page(pilot, confirmation=None, candidate=None, error=None):
                 text += '<tr><th>' + esc(label) + '</th><td>' + esc(value if value is not None else 'Not reported') + '</td></tr>'
             text += '</table><p>' + esc(p['note']) + '</p>'
         text += '<p>These are Home Assistant states, not direct network tests. “Playing” does not prove sound is reaching the speakers. State-update time is not a device heartbeat. No Sonos commands were sent.</p>'
+    text += '</section>'
+    text += '<section><h2>Ruckus diagnostics</h2><p>Select the current integration to exclude older entries from these readings.</p>'
+    extra = ''
+    if pilot.ruckus_entries:
+        extra = '<label>Ruckus integration <select name="entry_id" required><option value="">Select an entry</option>'
+        for e in pilot.ruckus_entries:
+            selected = ' selected' if e['entry_id'] == pilot.ruckus_selection else ''
+            extra += '<option value="' + esc(e['entry_id']) + '"' + selected + '>' + esc(e['title']) + ' — ' + esc(e['state']) + '</option>'
+        extra += '</select></label>'
+    text += form('ruckus', 'Check Ruckus', extra)
+    if pilot.ruckus_error:
+        text += '<p>' + esc(pilot.ruckus_error) + '</p>'
+    if pilot.ruckus is not None:
+        r = pilot.ruckus
+        text += '<p><strong>' + esc(r['entry']['title']) + '</strong> · HA integration state: ' + esc(r['entry']['state']) + '</p>'
+        text += '<p>Snapshot retrieved: ' + esc(r['checked_at']) + '</p>'
+        if r['entry']['state'] != 'loaded' or r['entry'].get('disabled_by'):
+            text += '<p>This entry is not loaded and enabled. Its retained entities are not presented as current readings.</p>'
+        else:
+            text += '<h3>Integration device inventory</h3><table><tr><th>Name</th><th>Manufacturer</th><th>Model</th></tr>'
+            for d in r['devices']:
+                text += '<tr>' + ''.join('<td>' + esc(d[k] if d[k] is not None else 'Not reported') + '</td>' for k in ('name','manufacturer','model')) + '</tr>'
+            text += '</table><p>Inventory is saved Home Assistant metadata, not a live AP health test.</p>'
+            text += '<h3>Reported entity states</h3><table><tr><th>Name</th><th>State</th><th>IP / MAC</th><th>Last HA update</th></tr>'
+            for e in r['entities']:
+                text += '<tr><td>' + esc(e['name']) + '</td><td>' + esc(e['state']) + '</td><td>' + esc(e['ip'] or e['mac'] or 'Not reported') + '</td><td>' + esc(e['last_updated'] or 'Not reported') + '</td></tr>'
+            text += '</table>'
+            if r['truncated']:
+                text += '<p>Showing the first 64 of ' + esc(r['entity_count']) + ' supported entities.</p>'
+            elif not r['entities']:
+                text += '<p>No enabled diagnostic entities were found for this entry.</p>'
+        text += '<p>Presence states (home/not_home) describe what the integration reports; they do not establish AP health, signal strength, internet performance, or the reason for a disconnection. No Ruckus settings were changed.</p>'
     text += '</section>'
     if pilot.config is None:
         return text + '<section><p>' + esc(pilot.config_error) + '</p></section></main></html>'
@@ -323,6 +386,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'sonos':
                     pilot.check_sonos()
                     self.send_page()
+                elif action == 'ruckus':
+                    pilot.check_ruckus(params.get('entry_id', [''])[0])
+                    self.send_page()
                 elif action == 'reboot':
                     if params.get('confirm') != ['yes']:
                         raise ProtocolError('Confirm the outlet mapping before rebooting')
@@ -342,7 +408,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.2.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.3.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

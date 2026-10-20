@@ -41,6 +41,23 @@ HA last-update time are displayed separately; neither proves audible output.
 No Sonos playback history or track details are written to the app service log.
 
 This version has no phone voice connection or external cloud access.
+
+## Ruckus checks (0.3.0)
+
+Select **Check Ruckus**, choose the current integration from the discovered-entry
+list, then select **Check Ruckus** again. The app remembers that selection locally.
+It does not disable, delete, reload or modify any Home Assistant integration.
+
+Only the selected entry supplies readings. Its setup state is displayed first;
+failed/disabled entries cannot contribute retained readings as if they were
+current. Device inventory is saved HA metadata. Entity values are HA-reported
+states, mainly presence for the standard Ruckus integration. They do not prove
+AP operational health, Wi-Fi signal, throughput, internet connectivity or root
+cause. Deeper controller diagnostics require a later direct integration.
+
+No extra credentials or API permissions are needed beyond the existing Core API
+grant. Entry metadata, entity/device registries and individual entity states are
+read; no HA configuration actions or Ruckus control commands are implemented.
 No Home Assistant configuration, automations or existing integrations are edited.
 All credentials stay in app configuration; include them only in protected backups.
 

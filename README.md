@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.7.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.8.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -187,3 +187,26 @@ The 0.7.0 command suffixes come from the pilot's own CLI help. Live validation
 of those requests and completion of the full interface read are still pending.
 The supported interface output format has been tested with sanitized fixtures
 based on the observed switch format; other formats remain available as raw text.
+
+## One-run discovery report (0.8.0)
+
+Select **Run discovery and prepare report** once, allow a few minutes, and
+refresh results. Select **Download Araknis report** and attach the JSON file in
+the support conversation. There is no automatic upload or external API setup.
+The report is generated on demand from memory, with no stored report file.
+
+Discovery walks only allowlisted system/environment/interfaces/power/PoE show
+paths actually advertised in CLI help. It uses at most 24 help probes, 12 reads,
+and a 180-second deadline checked between requests (an in-flight bounded request
+may finish after that deadline). Only paths explicitly advertising `<cr>` are
+executed. No numeric arguments are inferred, arbitrary input is accepted, or
+configuration/control requests are sent. The result records failures, captured
+syntax help and discovery limits, so one report can be inspected without
+repeated screen copying. Authentication/key failures abort the run.
+
+The download contains switch responses (including possible addresses, device
+names and identifiers), parsed port data and discovery metadata. It excludes app
+options, credentials, saved SSH keys and other connectors' data. The configured
+Araknis password is redacted from response values. The download requires HA
+ingress and a valid CSRF-protected form. No new app permissions are required.
+Live discovery/export validation remains pending.

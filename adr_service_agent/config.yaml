@@ -1,5 +1,5 @@
 name: ADR Service Agent
-version: "0.7.0"
+version: "0.8.0"
 slug: adr_service_agent
 description: "WattBox test reboot and read-only Sonos, Ruckus and UniFi diagnostics, plus Araknis SSH inspection."
 arch:

@@ -13,7 +13,7 @@ from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 from unifi import collect as collect_unifi, UniFiError
-from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, AraknisError
+from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, discover as discover_araknis, report_payload as araknis_report_payload, AraknisError
 
 
 def atomic_json(path, value):
@@ -76,6 +76,7 @@ class Pilot:
         self.araknis = None
         self.araknis_diagnostics = None
         self.araknis_running = False
+        self.araknis_progress = ''
         self.araknis_error = None
         self.araknis_candidate = None
         self.araknis_candidates = {}
@@ -150,7 +151,7 @@ class Pilot:
         self.audit('araknis_ssh_help_read')
         self.result = 'Araknis SSH login succeeded. CLI help was requested. Use Read Araknis diagnostics for switch responses.'
 
-    def start_araknis_diagnostics(self):
+    def start_araknis_diagnostics(self, discovery=False):
         if self.araknis_running:
             return
         config = araknis_settings(self.araknis_options)
@@ -159,10 +160,17 @@ class Pilot:
         self.araknis_diagnostics = None
         self.araknis_error = None
         self.araknis_running = True
+        self.araknis_progress = 'Starting discovery' if discovery else 'Starting diagnostics'
+        def progress(message):
+            with self.lock:
+                self.araknis_progress = message
         def run():
             result, error = None, None
             try:
-                result = araknis_snapshot(config, self.data / 'araknis_known_hosts')
+                if discovery:
+                    result = discover_araknis(config, self.data / 'araknis_known_hosts', progress=progress)
+                else:
+                    result = araknis_snapshot(config, self.data / 'araknis_known_hosts')
             except AraknisError as exc:
                 error = str(exc)
             except Exception:
@@ -334,7 +342,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.7.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.8.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -343,13 +351,21 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p>First-use SSH identity: <code>' + esc(key_fingerprint) + '</code></p><p>Approve only if this is your switch. A fingerprint shown here alone does not independently verify its identity. Saved keys cannot be silently replaced.</p>'
         text += form('araknis-trust', 'Approve Araknis SSH identity', '<input type="hidden" name="nonce" value="' + esc(nonce) + '">')
     text += form('araknis-check', 'Test Araknis login and read CLI help')
+    text += form('araknis-discover', 'Run discovery and prepare report')
     text += form('araknis-diagnostics', 'Read Araknis diagnostics')
     text += form('refresh', 'Refresh Araknis results')
     if pilot.araknis_running:
-        text += '<p>Reading switch diagnostics. Allow up to a few minutes, then refresh results.</p>'
+        text += '<p>' + esc(pilot.araknis_progress) + '. Allow a few minutes, then refresh results.</p>'
     if pilot.araknis_error:
         text += '<p>' + esc(pilot.araknis_error) + '</p>'
     if pilot.araknis_diagnostics:
+        text += form('araknis-report', 'Download Araknis report')
+        text += '<p>The report includes switch responses and network identifiers. Download it and attach it here; no screen copying is needed.</p>'
+        discovery = pilot.araknis_diagnostics.get('discovery')
+        if discovery:
+            text += '<p>Discovery completed: ' + esc(len(discovery['probes'])) + ' syntax checks and ' + esc(len(pilot.araknis_diagnostics['readings'])) + ' read requests. Report includes all captured syntax help.</p>'
+            if discovery['limit_reached']:
+                text += '<p>The discovery limit was reached; the report identifies unverified paths.</p>'
         text += '<h3>Araknis diagnostic snapshot</h3><p>Completed: ' + esc(pilot.araknis_diagnostics['checked_at']) + '</p>'
         for item in pilot.araknis_diagnostics['readings']:
             text += '<h3>' + esc(item['name']) + '</h3><p><code>' + esc(item['command']) + '</code> · ' + esc(item['status']) + '</p>'
@@ -526,6 +542,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_araknis_report(self):
+        pilot = self.server.pilot
+        if pilot.araknis_running or not pilot.araknis_diagnostics:
+            raise ProtocolError('Complete a diagnostic or discovery run before downloading its report.')
+        payload = araknis_report_payload(pilot.araknis_diagnostics,
+            pilot.araknis_options.get('araknis_password', ''))
+        body = json.dumps(payload, indent=2, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Disposition', 'attachment; filename="ADR-Araknis-Discovery.json"')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(body)
+
     def authorized(self):
         # Do not trust spoofable forwarded headers; enforce the actual peer.
         if self.client_address[0] != '172.30.32.2':
@@ -579,6 +611,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'araknis-trust':
                     pilot.araknis_trust(params.get('nonce', [''])[0])
                     self.send_page()
+                elif action == 'araknis-discover':
+                    pilot.start_araknis_diagnostics(discovery=True)
+                    self.send_page()
+                elif action == 'araknis-report':
+                    self.send_araknis_report()
                 elif action == 'araknis-diagnostics':
                     pilot.start_araknis_diagnostics()
                     self.send_page()
@@ -616,7 +653,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.7.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.8.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

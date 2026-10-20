@@ -1,3 +1,12 @@
+# 0.8.0
+
+- Add one-run, bounded read-only command discovery from supported CLI help.
+- Run only allowlisted paths that explicitly advertise an executable <cr> form.
+- Add an authenticated, CSRF-protected JSON report download with credential redaction.
+- Include captured syntax, failures and limits without copying each screen.
+- Keep reports in memory and require an explicit download; no automatic upload.
+- Live discovery and phone download validation remain pending.
+
 # 0.7.0
 
 - Use system/environment/power command suffixes reported by the pilot CLI help.

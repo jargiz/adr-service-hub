@@ -129,7 +129,7 @@ def read_pages(channel, read_fn=receive, max_pages=8, max_chars=32768):
 
 
 def query(client, command, read_fn=receive, help_only=False):
-    if command not in {command for _, command in DIAGNOSTIC_COMMANDS}:
+    if not permitted_request(command):
         raise AraknisError('Unsupported Araknis diagnostic request.')
     channel = client.invoke_shell(width=160, height=100)
     try:
@@ -222,3 +222,119 @@ def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
         raise AraknisError('Araknis SSH identity changed. Check the switch identity before reconnecting.') from None
     except paramiko.AuthenticationException:
         raise AraknisError('Araknis SSH login rejected. Check the switch username and password in app Configuration.') from None
+
+
+# Discovery can only traverse these five show-command families and vocabulary.
+# No user-entered command strings or device-supplied arbitrary tokens are run.
+DISCOVERY_WORDS = {
+    'system': {'information'},
+    'env': {'all', 'CPU', 'RAM', 'fan', 'flash', 'power', 'temperature'},
+    'interfaces': {'status', 'summary', 'brief', 'counters', 'statistics', 'errors', 'discards'},
+    'power': {'detail', 'inline', 'all', 'status', 'summary'},
+    'poe': {'port', 'all', 'status', 'summary', 'detail'},
+}
+
+
+def permitted_request(command):
+    if command in {command for _, command in DIAGNOSTIC_COMMANDS}:
+        return True
+    parts = command.split(' ')
+    if not 2 <= len(parts) <= 4 or parts[0] != 'show' or parts[1] not in DISCOVERY_WORDS:
+        return False
+    return all(word in DISCOVERY_WORDS[parts[1]] for word in parts[2:])
+
+
+def help_options(text, family):
+    advertised = re.findall(r'(?m)^\s*([A-Za-z][A-Za-z0-9-]*)[ \t]{2,}\S', text)
+    return sorted(set(advertised) & DISCOVERY_WORDS[family])
+
+
+def discover(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive,
+             progress=None, max_probes=24, max_reads=12, deadline_seconds=180):
+    """Bounded help traversal; execute only allowlisted paths advertising <cr>."""
+    if not keys_path.exists():
+        raise AraknisError('Inspect and approve the Araknis SSH identity first.')
+    queue = ['show ' + family for family in DISCOVERY_WORDS]
+    seen = set()
+    probes, readings = [], []
+    deadline = time.monotonic() + deadline_seconds
+    limited = False
+    def report(message):
+        if progress:
+            progress(message)
+    try:
+        while queue:
+            if len(probes) >= max_probes or time.monotonic() >= deadline:
+                limited = True
+                break
+            command = queue.pop(0)
+            if command in seen or not permitted_request(command):
+                continue
+            seen.add(command)
+            report('Inspecting ' + command + ' syntax')
+            probe = {'command': command + ' ?', 'response': '', 'truncated': False, 'error': ''}
+            try:
+                text, truncated = diagnostic_request(config, keys_path, command,
+                    client_factory, read_fn, help_only=True)
+                probe['response'] = text.replace(config['password'], '[redacted]')
+                probe['truncated'] = truncated
+                # Only tokens actually advertised by the CLI and also in the
+                # local vocabulary enter the queue. Never infer numeric args.
+                if len(command.split()) < 4:
+                    for option in help_options(text, command.split()[1]):
+                        child = command + ' ' + option
+                        if child not in seen and child not in queue and permitted_request(child):
+                            queue.append(child)
+                if re.search(r'(?im)^\s*<cr>(?:\s|$)', text) and not truncated:
+                    if len(readings) >= max_reads or time.monotonic() >= deadline:
+                        limited = True
+                    else:
+                        report('Reading ' + command)
+                        item = {'name': command[5:], 'command': command,
+                            'status': 'response received', 'response': '', 'help': '',
+                            'truncated': False, 'error': ''}
+                        try:
+                            response, partial = diagnostic_request(config, keys_path, command,
+                                client_factory, read_fn)
+                            item['response'] = response.replace(config['password'], '[redacted]')
+                            item['truncated'] = partial
+                            if command == 'show interfaces':
+                                item['ports'] = parse_interfaces(item['response'])
+                            if not response or re.search(r'(?i)(incomplete command|invalid (input|command)|ambiguous command|unrecognized command|unknown command|syntax error|%\s*error)', response):
+                                item['status'] = 'command needs verification'
+                        except (paramiko.BadHostKeyException, paramiko.AuthenticationException):
+                            raise
+                        except Exception:
+                            item['status'] = 'read failed'
+                            item['error'] = 'Independent SSH read failed; no automatic retry.'
+                        readings.append(item)
+            except (paramiko.BadHostKeyException, paramiko.AuthenticationException):
+                raise
+            except Exception:
+                probe['error'] = 'Syntax-help request failed; no automatic retry.'
+            probes.append(probe)
+        return {'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'report_type': 'read_only_discovery', 'readings': readings,
+            'discovery': {'probes': probes, 'limit_reached': limited,
+                'remaining_paths': len(queue), 'max_probes': max_probes, 'max_reads': max_reads,
+                'note': 'Unvisited paths and commands needing numeric arguments remain unverified. Resource thresholds are not current utilization. Counters are cumulative.'}}
+    except paramiko.BadHostKeyException:
+        raise AraknisError('Araknis SSH identity changed. Check the switch identity before reconnecting.') from None
+    except paramiko.AuthenticationException:
+        raise AraknisError('Araknis SSH login rejected. Check the switch username and password in app Configuration.') from None
+
+
+def report_payload(result, password):
+    def clean(value):
+        if isinstance(value, str):
+            return value.replace(password, '[redacted]') if password else value
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items()}
+        return value
+    return {'format': 'adr-araknis-discovery-v1', 'agent_version': '0.8.0',
+        'read_only': True, 'snapshot': clean(result),
+        'limitations': ['Command syntax and raw values are reported, not a health verdict.',
+            'No running configuration, app options, credentials or SSH keys are included.',
+            'Switch responses can include network addresses, device names and identifiers.']}

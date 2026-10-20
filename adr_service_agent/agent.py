@@ -14,6 +14,7 @@ from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 from unifi import collect as collect_unifi, UniFiError
 from crestron import collect as collect_crestron, report_payload as crestron_report_payload, CrestronError
+from cp4 import collect as collect_cp4, settings as cp4_settings, report_payload as cp4_report_payload, CP4Error
 from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, discover as discover_araknis, report_payload as araknis_report_payload, AraknisError
 
 
@@ -81,6 +82,12 @@ class Pilot:
         self.araknis_error = None
         self.araknis_candidate = None
         self.araknis_candidates = {}
+        self.cp4_options = dict(self.araknis_options)
+        self.cp4 = None
+        self.cp4_error = None
+        self.cp4_running = False
+        self.cp4_candidate = None
+        self.cp4_candidates = {}
         self.box_factory = box_factory
         self.lock = threading.Lock()
         self.csrf = secrets.token_urlsafe(32)
@@ -195,6 +202,54 @@ class Pilot:
             worker.start()
         except Exception:
             self.araknis_running = False
+            raise
+
+    def cp4_identity(self):
+        config = cp4_settings(self.cp4_options)
+        self.cp4_candidate = None
+        key = inspect_key(config['host'], config['port'])
+        nonce = secrets.token_urlsafe(24)
+        self.cp4_candidates = {nonce: (time.monotonic(), key, config['host'], config['port'])}
+        self.cp4_candidate = (nonce, fingerprint(key))
+
+    def cp4_trust(self, nonce):
+        item = self.cp4_candidates.pop(nonce, None)
+        if item is None or time.monotonic() - item[0] > 120:
+            raise ProtocolError('CP4-R identity approval expired. Inspect again.')
+        config = cp4_settings(self.cp4_options)
+        if (config['host'], config['port']) != (item[2], item[3]):
+            raise ProtocolError('CP4-R target changed. Inspect again.')
+        pin_key(self.data / 'cp4_known_hosts', item[2], item[3], item[1])
+        self.cp4_candidate = None
+        self.audit('cp4_identity_approved')
+
+    def start_cp4_diagnostics(self):
+        if self.cp4_running:
+            return
+        config = cp4_settings(self.cp4_options)
+        if not (self.data / 'cp4_known_hosts').exists():
+            raise ProtocolError('Inspect and approve the CP4-R SSH identity first.')
+        self.cp4 = None
+        self.cp4_error = None
+        self.cp4_running = True
+        def run():
+            result, error = None, None
+            try:
+                result = collect_cp4(config, self.data / 'cp4_known_hosts')
+            except CP4Error as exc:
+                error = str(exc)
+            except Exception:
+                error = 'CP4-R diagnostics failed. No automatic retry was made.'
+            with self.lock:
+                self.cp4 = result
+                self.cp4_error = error
+                self.cp4_running = False
+                if result:
+                    self.audit('cp4_diagnostics_read', str(len(result['readings'])) + ' response(s)')
+        try:
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self.cp4_running = False
             raise
 
     def start_crestron_discovery(self, entry_id=''):
@@ -382,7 +437,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.9.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.10.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -437,6 +492,26 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         if a['truncated']:
             text += '<p>Response reached the page or size limit.</p>'
     text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. The diagnostic button requests system, environment, interface, power and PoE information using fixed show commands. Unsupported syntax is shown with help where available. Responses stay in memory; credentials are not displayed.</p></section>'
+    text += '<section><h2>CP4-R processor diagnostics</h2><p>Configure cp4_host, cp4_ssh_port, cp4_username and cp4_password in app Configuration. Use the processor SSH/Toolbox account.</p>'
+    text += form('cp4-identity', 'Inspect CP4-R SSH identity')
+    if pilot.cp4_candidate:
+        nonce, key_fingerprint = pilot.cp4_candidate
+        text += '<p>First-use identity: <code>' + esc(key_fingerprint) + '</code>. Verify the target and compare independently where available; this displayed fingerprint alone does not independently prove identity.</p>'
+        text += form('cp4-trust', 'Approve CP4-R SSH identity', '<input type="hidden" name="nonce" value="' + esc(nonce) + '">')
+    text += form('cp4-check', 'Read CP4-R diagnostics')
+    text += form('refresh', 'Refresh CP4-R results')
+    if pilot.cp4_running:
+        text += '<p>Reading processor diagnostics. Allow a couple of minutes, then refresh results.</p>'
+    if pilot.cp4_error:
+        text += '<p>' + esc(pilot.cp4_error) + '</p>'
+    if pilot.cp4:
+        text += form('cp4-report', 'Download CP4-R report')
+        text += '<p>Completed: ' + esc(pilot.cp4['checked_at']) + ' · SSH authenticated · CP4-R model ' + ('identified' if pilot.cp4['model_verified'] else 'unverified') + '</p>'
+        for item in pilot.cp4['readings']:
+            text += '<details><summary>' + esc(item['name']) + ' · ' + esc(item['status']) + '</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['response'] or 'No response captured.') + '</pre></details>'
+        for note in pilot.cp4['not_attempted']:
+            text += '<p>' + esc(note) + '</p>'
+    text += '<p>Reads processor version and supported diagnostic commands. IP-table results cover only that table, not the full Home device-health inventory. Unsupported metrics remain unverified. No restart or configuration commands are implemented.</p></section>'
     text += '<section><h2>Crestron discovery</h2><p>Inspect your existing Crestron integration in Home Assistant. No additional processor credentials are needed.</p>'
     extra = ''
     c_report = pilot.crestron
@@ -657,6 +732,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_cp4_report(self):
+        pilot = self.server.pilot
+        if pilot.cp4_running or not pilot.cp4:
+            raise ProtocolError('Complete a CP4-R check before downloading its report.')
+        body = json.dumps(cp4_report_payload(pilot.cp4), indent=2, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Disposition', 'attachment; filename="ADR-CP4-Diagnostics.json"')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(body)
+
     def authorized(self):
         # Do not trust spoofable forwarded headers; enforce the actual peer.
         if self.client_address[0] != '172.30.32.2':
@@ -721,6 +810,17 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'araknis-check':
                     pilot.check_araknis()
                     self.send_page()
+                elif action == 'cp4-identity':
+                    pilot.cp4_identity()
+                    self.send_page()
+                elif action == 'cp4-trust':
+                    pilot.cp4_trust(params.get('nonce', [''])[0])
+                    self.send_page()
+                elif action == 'cp4-check':
+                    pilot.start_cp4_diagnostics()
+                    self.send_page()
+                elif action == 'cp4-report':
+                    self.send_cp4_report()
                 elif action == 'crestron-discover':
                     pilot.start_crestron_discovery(params.get('entry_id', [''])[0])
                     self.send_page()
@@ -748,7 +848,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_page(400, error=str(exc))
             except Exception:
                 # Paramiko and OS exceptions may include sensitive remote strings.
-                if action.startswith('araknis-'):
+                if action.startswith('cp4-'):
+                    self.send_page(502, error='CP4-R connection failed. Check its SSH settings and approved identity.')
+                elif action.startswith('araknis-'):
                     self.send_page(502, error='Araknis connection failed. Check the address, SSH port, credentials and saved SSH identity.')
                 else:
                     self.send_page(502, error='Connection or command failed. Check the address, credentials, and saved SSH identity. If a reboot was attempted, its outcome may be unknown; no automatic retry was made.')
@@ -757,7 +859,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.9.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.10.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

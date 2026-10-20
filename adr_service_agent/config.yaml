@@ -1,7 +1,7 @@
 name: ADR Service Agent
-version: "0.9.0"
+version: "0.10.0"
 slug: adr_service_agent
-description: "WattBox test reboot and read-only Sonos, Ruckus and UniFi diagnostics, Araknis SSH inspection and Crestron discovery."
+description: "Read-only network, Sonos, Crestron and CP4-R diagnostics; single-outlet WattBox pilot."
 arch:
   - aarch64
   - amd64
@@ -30,6 +30,10 @@ options:
   araknis_ssh_port: 22
   araknis_username: ""
   araknis_password: ""
+  cp4_host: ""
+  cp4_ssh_port: 22
+  cp4_username: ""
+  cp4_password: ""
 schema:
   wattbox_host: str
   ssh_port: port
@@ -43,3 +47,7 @@ schema:
   araknis_ssh_port: port?
   araknis_username: str?
   araknis_password: password?
+  cp4_host: str?
+  cp4_ssh_port: port?
+  cp4_username: str?
+  cp4_password: password?

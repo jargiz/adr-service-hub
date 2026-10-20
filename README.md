@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.9.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.10.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -253,3 +253,36 @@ HA ingress and CSRF, include only the selected connector's discovery data, and
 exclude config-entry data/options, HA tokens and processor credentials. Reports
 may include private room/device names and operational states. Live discovery on
 the pilot's installed integration remains pending.
+
+## CP4-R direct processor diagnostics (0.10.0)
+
+Set optional `cp4_host`, `cp4_ssh_port` (22), `cp4_username` and `cp4_password`
+in app Configuration, save and restart only ADR Service Agent. Use a working
+processor SSH/Toolbox account; do not reset processor credentials or regenerate
+its Home API token for this connector. Existing HA integration is unchanged.
+Inspect and explicitly approve a separate CP4-R SSH key, then read diagnostics
+and download the CP4-R report. A changed key is rejected; no agent/key login
+fallbacks or automatic credential retries are used.
+
+The fixed command allowlist is VER -V, HELP ALL, IPTABLE -p:all -t, UPTIME,
+CPULOAD, RAMFREE, and the last three commands with a literal ? help argument.
+After the version response identifies CP4-R, help is read to confirm supported
+commands. IP table is read only if advertised. CPU/memory/uptime syntax is
+captured first; a query is attempted only when help describes a display query
+and does not indicate start/stop/reset or other control operations. Unsupported
+or ambiguous metrics remain unverified. An incomplete response stops subsequent
+commands. Output is bounded to 256 KB/64 pager advances/20 seconds per response.
+The current CPU response alone is not a sustained-load assessment.
+
+IP-table coverage is limited to configured IP-table entries, not all Crestron
+Home devices, batteries or the Home Device Health dashboard. Firmware output,
+resource readings and compatibility need live validation on the pilot processor.
+Reports contain raw read responses and missing-command notes, not inferred
+metrics. They stay in memory; logs contain only counts. The configured password
+is redacted; credentials and keys are excluded from the report. Downloads use
+HA ingress and CSRF protection. No new app API/network permissions are added.
+
+Primary references:
+- https://docs.crestron.com/en-us/8559/Content/Topics/Reference/Architecture.htm
+- https://www.crestron.com/Products/Catalog/Control-and-Management/Control-System/Residential/CP4-R
+- https://docs.crestron.com/en-us/8559/content/topics/Reference/Program-Management.htm

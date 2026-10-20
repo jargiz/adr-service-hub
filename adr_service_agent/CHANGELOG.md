@@ -1,3 +1,11 @@
+# 0.10.0
+
+- Add optional direct CP4-R SSH connection with separate explicit host-key trust.
+- Read processor version, advertised diagnostics and read-only all-program IP table.
+- Capture CPU/memory/uptime help and query only supported display syntax.
+- Add a bounded CP4-R report without restarts, config writes or inferred health.
+- Live processor access and command compatibility remain pending.
+
 # 0.9.0
 
 - Add background read-only discovery of existing Crestron HA integrations.

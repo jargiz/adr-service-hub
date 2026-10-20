@@ -1,3 +1,11 @@
+# 0.6.0
+
+- Add background, on-demand Araknis diagnostic snapshots with six fixed show requests.
+- Request category-specific syntax help for incomplete or invalid commands.
+- Use separate command channels, bounded pagination, and explicit error states.
+- Keep all raw responses in memory; no configuration or power controls.
+- SSH login/show help verified on the pilot; diagnostic requests need live validation.
+
 # 0.5.1
 
 - Request `show ?` context help instead of root CLI help.

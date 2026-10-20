@@ -97,7 +97,27 @@ It advances only explicit `--More--` pager prompts with a space, with an
 eight-page and 32 KB content limit. It does not send configuration,
 restart, PoE or arbitrary user-entered commands. No automatic retries or startup
 connections occur. This stage verifies login and discovers the CLI, not switch
-health. Port/PoE telemetry requires a later verified command implementation.
+health. The separate diagnostic snapshot requests fixed show commands; their live syntax
+and responses still require verification.
 Responses are bounded, HTML escaped, kept in memory only and not logged. The
 SSH key is saved separately from the WattBox key. Live switch validation is
 pending; automated tests use simulated SSH clients.
+
+## Araknis diagnostic snapshot (0.6.0)
+
+After SSH identity approval, select **Read Araknis diagnostics**. The check runs
+in the background; use **Refresh Araknis results** to view completion. Starting
+another check while one is running does not create a second job. Requests are
+fixed: `show system`, `show env`, `show cpu`, `show interfaces`, `show power`,
+`show poe`. Each uses a fresh SSH channel and requires a recognized command
+prompt. An incomplete/invalid command requests that same fixed command's `?`
+context help on a new channel. There is no arbitrary command field, retry,
+privilege escalation, running-config read, or switch control.
+
+Responses have an eight-page/32 KB content limit per request and a four-second
+receive limit per page. All six categories are displayed as raw responses,
+including errors or failed reads. No CPU values, port states or PoE watts are
+inferred or fabricated; a successful SSH request is not a device-health verdict.
+Responses stay in memory. Logs contain only completion and response count.
+The pilot has verified SSH login and root show-help; diagnostic commands need
+live validation on the selected firmware.

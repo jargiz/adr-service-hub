@@ -63,6 +63,83 @@ class AraknisTests(unittest.TestCase):
         self.assertLessEqual(len(text), 32769)
         self.assertEqual(channel.sendall.call_count, 2)
 
+    def test_query_rejects_arbitrary_commands_before_opening_channel(self):
+        client = Mock()
+        for command in ('reload', 'configure', 'show running-config', 'show system; reload', 'show poe\rreload'):
+            with self.assertRaises(araknis.AraknisError):
+                araknis.query(client, command)
+        client.invoke_shell.assert_not_called()
+
+    def test_query_requires_prompt_and_closes_channel(self):
+        client = Mock()
+        channel = client.invoke_shell.return_value
+        with self.assertRaisesRegex(araknis.AraknisError, 'prompt'):
+            araknis.query(client, 'show system', lambda _: ('Select a menu item:', False))
+        channel.sendall.assert_not_called()
+        channel.close.assert_called_once()
+
+    def test_snapshot_uses_six_fixed_commands_on_fresh_channels(self):
+        client = Mock()
+        channels = [Mock() for _ in range(6)]
+        client.invoke_shell.side_effect = channels
+        responses = iter([reply for _ in range(6) for reply in [('(switch)#', False), ('test reading\n(switch)#', False)]])
+        result = araknis.snapshot(self.config, self.keys, lambda: client, lambda _: next(responses))
+        for channel, (_, command) in zip(channels, araknis.DIAGNOSTIC_COMMANDS):
+            channel.sendall.assert_called_once_with((command + '\r').encode())
+            channel.close.assert_called_once()
+        self.assertEqual(len(result['readings']), 6)
+        client.close.assert_called_once()
+        self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
+
+    def test_incomplete_command_requests_only_its_context_help(self):
+        client = Mock()
+        with patch('araknis.query', side_effect=[('% Incomplete command', False), ('usage text', False)] * 6) as query:
+            result = araknis.snapshot(self.config, self.keys, lambda: client)
+        self.assertEqual(query.call_count, 12)
+        for n, (_, command) in enumerate(araknis.DIAGNOSTIC_COMMANDS):
+            self.assertEqual(query.call_args_list[2*n].args[1], command)
+            self.assertTrue(query.call_args_list[2*n+1].kwargs['help_only'])
+            self.assertEqual(query.call_args_list[2*n+1].args[1], command)
+        self.assertEqual(result['readings'][0]['status'], 'command needs verification')
+        self.assertEqual(result['readings'][0]['help'], 'usage text')
+
+    def test_snapshot_redacts_password_and_preserves_failed_reads(self):
+        client = Mock()
+        replies = [(self.config['password'], False)] + [RuntimeError(self.config['password'])] * 5
+        with patch('araknis.query', side_effect=replies):
+            result = araknis.snapshot(self.config, self.keys, lambda: client)
+        self.assertNotIn(self.config['password'], str(result))
+        self.assertEqual(result['readings'][1]['status'], 'read failed')
+        self.assertEqual(result['readings'][1]['response'], '')
+
+    def test_background_single_job_no_stale_readings_after_failure(self):
+        options = self.root / 'options.json'
+        options.write_text(json.dumps(self.options))
+        pilot = Pilot(self.root, options)
+        (self.root / 'araknis_known_hosts').touch()
+        pilot.araknis_diagnostics = {'old': 'snapshot'}
+        with patch('agent.threading.Thread') as thread:
+            pilot.start_araknis_diagnostics()
+            pilot.start_araknis_diagnostics()
+            thread.assert_called_once()
+            self.assertTrue(pilot.araknis_running)
+            self.assertIsNone(pilot.araknis_diagnostics)
+            job = thread.call_args.kwargs['target']
+        with patch('agent.araknis_snapshot', side_effect=RuntimeError(self.config['password'])):
+            job()
+        self.assertFalse(pilot.araknis_running)
+        self.assertIsNone(pilot.araknis_diagnostics)
+        self.assertNotIn(self.config['password'], pilot.araknis_error)
+
+    def test_query_help_has_no_newline_and_uses_bounded_pager(self):
+        client = Mock()
+        channel = client.invoke_shell.return_value
+        responses = iter([('(switch)#', False), ('help --More--', False), ('last help', False)])
+        text, truncated = araknis.query(client, 'show power', lambda _: next(responses), help_only=True)
+        self.assertEqual([call.args[0] for call in channel.sendall.call_args_list], [b'show power ?', b' '])
+        self.assertFalse(truncated)
+        self.assertIn('last help', text)
+
     def test_identity_required_before_login(self):
         self.keys.unlink()
         factory = Mock()

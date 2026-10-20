@@ -13,7 +13,7 @@ from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 from unifi import collect as collect_unifi, UniFiError
-from araknis import settings as araknis_settings, inspect as inspect_araknis
+from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, AraknisError
 
 
 def atomic_json(path, value):
@@ -74,6 +74,9 @@ class Pilot:
         except (OSError, ValueError):
             pass
         self.araknis = None
+        self.araknis_diagnostics = None
+        self.araknis_running = False
+        self.araknis_error = None
         self.araknis_candidate = None
         self.araknis_candidates = {}
         self.box_factory = box_factory
@@ -145,7 +148,37 @@ class Pilot:
         self.araknis = inspect_araknis(araknis_settings(self.araknis_options),
             self.data / 'araknis_known_hosts')
         self.audit('araknis_ssh_help_read')
-        self.result = 'Araknis SSH login succeeded. CLI help was requested; port and PoE telemetry are not implemented yet.'
+        self.result = 'Araknis SSH login succeeded. CLI help was requested. Use Read Araknis diagnostics for switch responses.'
+
+    def start_araknis_diagnostics(self):
+        if self.araknis_running:
+            return
+        config = araknis_settings(self.araknis_options)
+        if not (self.data / 'araknis_known_hosts').exists():
+            raise ProtocolError('Inspect and approve the Araknis SSH identity first.')
+        self.araknis_diagnostics = None
+        self.araknis_error = None
+        self.araknis_running = True
+        def run():
+            result, error = None, None
+            try:
+                result = araknis_snapshot(config, self.data / 'araknis_known_hosts')
+            except AraknisError as exc:
+                error = str(exc)
+            except Exception:
+                error = 'Araknis diagnostics failed. No automatic retry was made.'
+            with self.lock:
+                self.araknis_diagnostics = result
+                self.araknis_error = error
+                self.araknis_running = False
+                if result:
+                    self.audit('araknis_diagnostics_read', str(len(result['readings'])) + ' response(s)')
+        worker = threading.Thread(target=run, daemon=True)
+        try:
+            worker.start()
+        except Exception:
+            self.araknis_running = False
+            raise
 
     def check_unifi(self, entry_id='', device_id=''):
         self.unifi = None
@@ -301,7 +334,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.5.1</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.6.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -310,6 +343,23 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p>First-use SSH identity: <code>' + esc(key_fingerprint) + '</code></p><p>Approve only if this is your switch. A fingerprint shown here alone does not independently verify its identity. Saved keys cannot be silently replaced.</p>'
         text += form('araknis-trust', 'Approve Araknis SSH identity', '<input type="hidden" name="nonce" value="' + esc(nonce) + '">')
     text += form('araknis-check', 'Test Araknis login and read CLI help')
+    text += form('araknis-diagnostics', 'Read Araknis diagnostics')
+    text += form('refresh', 'Refresh Araknis results')
+    if pilot.araknis_running:
+        text += '<p>Reading switch diagnostics. Allow up to a few minutes, then refresh results.</p>'
+    if pilot.araknis_error:
+        text += '<p>' + esc(pilot.araknis_error) + '</p>'
+    if pilot.araknis_diagnostics:
+        text += '<h3>Araknis diagnostic snapshot</h3><p>Completed: ' + esc(pilot.araknis_diagnostics['checked_at']) + '</p>'
+        for item in pilot.araknis_diagnostics['readings']:
+            text += '<h3>' + esc(item['name']) + '</h3><p><code>' + esc(item['command']) + '</code> · ' + esc(item['status']) + '</p>'
+            text += '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['response'] or 'No response captured.') + '</pre>'
+            if item['help']:
+                text += '<details open><summary>Command syntax help</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['help']) + '</pre></details>'
+            if item['truncated']:
+                text += '<p>Response reached the page or size limit.</p>'
+        text += '<p>These are raw switch responses. A response does not establish switch or connected-device health. Syntax errors and failed reads require verification.</p>'
+
     if pilot.araknis:
         a = pilot.araknis
         text += '<p>SSH authenticated. Snapshot retrieved: ' + esc(a['checked_at']) + '</p>'
@@ -317,7 +367,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<h3>Show-command help response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['help'] or 'No help text returned. The CLI may require a different help syntax.') + '</pre>'
         if a['truncated']:
             text += '<p>Response reached the page or size limit.</p>'
-    text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. Port and PoE readings are not implemented yet. Responses stay in memory; credentials are not displayed.</p></section>'
+    text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. The diagnostic button requests system, environment, CPU, interface, power and PoE information using fixed show commands. Unsupported syntax is shown with help where available. Responses stay in memory; credentials are not displayed.</p></section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
     if pilot.sonos_error:
@@ -516,6 +566,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'araknis-trust':
                     pilot.araknis_trust(params.get('nonce', [''])[0])
                     self.send_page()
+                elif action == 'araknis-diagnostics':
+                    pilot.start_araknis_diagnostics()
+                    self.send_page()
                 elif action == 'araknis-check':
                     pilot.check_araknis()
                     self.send_page()
@@ -550,7 +603,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.5.1 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.6.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

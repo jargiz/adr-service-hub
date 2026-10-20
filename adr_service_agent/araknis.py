@@ -31,18 +31,25 @@ def receive(channel, duration=4):
     deadline = time.monotonic() + duration
     data = bytearray()
     truncated = False
+    last_data = time.monotonic()
     while time.monotonic() < deadline:
         if channel.recv_ready():
             chunk = channel.recv(min(4096, 32769 - len(data)))
             if not chunk:
                 break
             data.extend(chunk)
+            last_data = time.monotonic()
             if len(data) > 32768:
                 truncated = True
                 break
         elif channel.closed:
             break
         else:
+            tail = bytes(data[-256:]).decode('utf-8', errors='replace')
+            if data and time.monotonic() - last_data >= 0.25 and (
+                    tail.rstrip().endswith('--More--') or
+                    re.search(r'(?:^|\n)[^\n]{0,80}[#>]\s*$', tail)):
+                break
             time.sleep(0.05)
     value = bytes(data[:32768]).decode('utf-8', errors='replace')
     value = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', value)
@@ -53,23 +60,7 @@ def receive(channel, duration=4):
 def show_help(channel, read_fn=receive):
     """Request context help only; advance at most seven explicit pager prompts."""
     channel.sendall(b'show ?')
-    parts = []
-    total = 0
-    for page_number in range(8):
-        text, truncated = read_fn(channel)
-        remaining = 32768 - total
-        parts.append(text[:remaining])
-        total += len(parts[-1])
-        more = text.rstrip().endswith('--More--')
-        if truncated or len(text) > remaining or total >= 32768:
-            return '\n'.join(parts), True
-        if not more:
-            return '\n'.join(parts), False
-        if page_number == 7:
-            return '\n'.join(parts), True
-        # Space is sent only in response to an explicit pager marker.
-        channel.sendall(b' ')
-    return '\n'.join(parts), True
+    return read_pages(channel, read_fn)
 
 
 def inspect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
@@ -93,6 +84,94 @@ def inspect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
         return {'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'welcome': redact(welcome), 'help': redact(help_text),
             'truncated': first_truncated or help_truncated}
+    except paramiko.BadHostKeyException:
+        raise AraknisError('Araknis SSH identity changed. Check the switch identity before reconnecting.') from None
+    except paramiko.AuthenticationException:
+        raise AraknisError('Araknis SSH login rejected. Check the switch username and password in app Configuration.') from None
+    except AraknisError:
+        raise
+    except Exception:
+        raise AraknisError('Araknis SSH connection failed. Check its address, SSH port, credentials and approved identity.') from None
+    finally:
+        client.close()
+
+
+# Fixed read-only requests based on help returned by the pilot switch.
+# No running configuration, credential, config mode, or control requests.
+DIAGNOSTIC_COMMANDS = (
+    ('System', 'show system'),
+    ('Environment', 'show env'),
+    ('CPU', 'show cpu'),
+    ('Interfaces', 'show interfaces'),
+    ('Power', 'show power'),
+    ('PoE', 'show poe'),
+)
+
+
+def read_pages(channel, read_fn=receive):
+    parts = []
+    total = 0
+    for number in range(8):
+        text, truncated = read_fn(channel)
+        remaining = 32768 - total
+        parts.append(text[:remaining])
+        total += len(parts[-1])
+        more = text.rstrip().endswith('--More--')
+        if truncated or len(text) > remaining or total >= 32768:
+            return '\n'.join(parts), True
+        if not more:
+            return '\n'.join(parts), False
+        if number == 7:
+            return '\n'.join(parts), True
+        channel.sendall(b' ')
+    return '\n'.join(parts), True
+
+
+def query(client, command, read_fn=receive, help_only=False):
+    if command not in {command for _, command in DIAGNOSTIC_COMMANDS}:
+        raise AraknisError('Unsupported Araknis diagnostic request.')
+    channel = client.invoke_shell(width=160, height=100)
+    try:
+        channel.settimeout(1)
+        welcome, truncated = read_fn(channel)
+        if truncated or not re.search(r'(?:^|\n)[^\n]{0,80}[#>]\s*$', welcome):
+            raise AraknisError('Switch command prompt was not recognized; no diagnostic command sent.')
+        request = command + (' ?' if help_only else '\r')
+        channel.sendall(request.encode('ascii'))
+        text, truncated = read_pages(channel, read_fn)
+        return text, truncated
+    finally:
+        channel.close()
+
+
+def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
+    if not keys_path.exists():
+        raise AraknisError('Inspect and approve the Araknis SSH identity first.')
+    client = client_factory()
+    try:
+        client.load_host_keys(str(keys_path))
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        client.connect(config['host'], port=config['port'], username=config['username'],
+            password=config['password'], timeout=6, banner_timeout=6, auth_timeout=6,
+            allow_agent=False, look_for_keys=False)
+        results = []
+        for name, command in DIAGNOSTIC_COMMANDS:
+            item = {'name': name, 'command': command, 'response': '', 'help': '',
+                'truncated': False, 'status': 'response received'}
+            try:
+                text, truncated = query(client, command, read_fn)
+                item['response'] = text.replace(config['password'], '[redacted]')
+                item['truncated'] = truncated
+                if not text or re.search(r'(?i)(incomplete command|invalid (input|command)|ambiguous command|unrecognized command|unknown command|syntax error|%\s*error)', text):
+                    item['status'] = 'command needs verification'
+                    help_text, help_truncated = query(client, command, read_fn, help_only=True)
+                    item['help'] = help_text.replace(config['password'], '[redacted]')
+                    item['truncated'] |= help_truncated
+            except Exception:
+                item['status'] = 'read failed'
+            results.append(item)
+        return {'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'readings': results}
     except paramiko.BadHostKeyException:
         raise AraknisError('Araknis SSH identity changed. Check the switch identity before reconnecting.') from None
     except paramiko.AuthenticationException:

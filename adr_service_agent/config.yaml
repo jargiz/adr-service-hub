@@ -1,7 +1,7 @@
 name: ADR Service Agent
-version: "0.4.0"
+version: "0.5.0"
 slug: adr_service_agent
-description: "WattBox test reboot and read-only Sonos, Ruckus and UniFi diagnostics."
+description: "WattBox test reboot and read-only Sonos, Ruckus and UniFi diagnostics, plus Araknis SSH inspection."
 arch:
   - aarch64
   - amd64
@@ -26,6 +26,10 @@ options:
   expected_outlet_label: "Apple TV"
   device_alias: "Test Apple TV"
   allow_reboot: false
+  araknis_host: ""
+  araknis_ssh_port: 22
+  araknis_username: ""
+  araknis_password: ""
 schema:
   wattbox_host: str
   ssh_port: port
@@ -35,3 +39,7 @@ schema:
   expected_outlet_label: str
   device_alias: str
   allow_reboot: bool
+  araknis_host: str?
+  araknis_ssh_port: port?
+  araknis_username: str?
+  araknis_password: password?

@@ -1,3 +1,11 @@
+# 0.5.0
+
+- Add optional Araknis SSH configuration and separate host-key approval.
+- Add on-demand authenticated login and CLI help inspection from ingress.
+- Send only the help character; no port, PoE, restart or configuration commands.
+- Keep bounded responses in memory and reject changed saved SSH keys.
+- Live switch validation is pending.
+
 # 0.4.0
 
 - Add read-only UniFi diagnostics with integration and device selection.

@@ -13,6 +13,7 @@ from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 from unifi import collect as collect_unifi, UniFiError
+from araknis import settings as araknis_settings, inspect as inspect_araknis
 
 
 def atomic_json(path, value):
@@ -67,6 +68,14 @@ class Pilot:
             self.config = load_config(options_path)
         except (ValueError, OSError, KeyError):
             self.config_error = "Complete the app Configuration fields, save, and restart this app."
+        self.araknis_options = {}
+        try:
+            self.araknis_options = json.loads(Path(options_path).read_text())
+        except (OSError, ValueError):
+            pass
+        self.araknis = None
+        self.araknis_candidate = None
+        self.araknis_candidates = {}
         self.box_factory = box_factory
         self.lock = threading.Lock()
         self.csrf = secrets.token_urlsafe(32)
@@ -109,6 +118,34 @@ class Pilot:
     def ready(self):
         if self.config is None:
             raise ProtocolError(self.config_error)
+
+    def araknis_identity(self):
+        config = araknis_settings(self.araknis_options)
+        self.araknis = None
+        self.araknis_candidate = None
+        key = inspect_key(config['host'], config['port'])
+        nonce = secrets.token_urlsafe(24)
+        self.araknis_candidates = {nonce: (time.monotonic(), key, config['host'], config['port'])}
+        self.araknis_candidate = (nonce, fingerprint(key))
+
+    def araknis_trust(self, nonce):
+        item = self.araknis_candidates.pop(nonce, None)
+        if item is None or time.monotonic() - item[0] > 120:
+            raise ProtocolError('Araknis identity approval expired. Inspect again.')
+        config = araknis_settings(self.araknis_options)
+        if (config['host'], config['port']) != (item[2], item[3]):
+            raise ProtocolError('Araknis target changed. Inspect again.')
+        pin_key(self.data / 'araknis_known_hosts', item[2], item[3], item[1])
+        self.araknis_candidate = None
+        self.audit('araknis_identity_approved')
+        self.result = 'Araknis SSH identity saved. You can now test login and read CLI help.'
+
+    def check_araknis(self):
+        self.araknis = None
+        self.araknis = inspect_araknis(araknis_settings(self.araknis_options),
+            self.data / 'araknis_known_hosts')
+        self.audit('araknis_ssh_help_read')
+        self.result = 'Araknis SSH login succeeded. CLI help was requested; port and PoE telemetry are not implemented yet.'
 
     def check_unifi(self, entry_id='', device_id=''):
         self.unifi = None
@@ -264,8 +301,23 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.4.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.5.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
+    text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
+    text += form('araknis-identity', 'Inspect Araknis SSH identity')
+    if pilot.araknis_candidate:
+        nonce, key_fingerprint = pilot.araknis_candidate
+        text += '<p>First-use SSH identity: <code>' + esc(key_fingerprint) + '</code></p><p>Approve only if this is your switch. A fingerprint shown here alone does not independently verify its identity. Saved keys cannot be silently replaced.</p>'
+        text += form('araknis-trust', 'Approve Araknis SSH identity', '<input type="hidden" name="nonce" value="' + esc(nonce) + '">')
+    text += form('araknis-check', 'Test Araknis login and read CLI help')
+    if pilot.araknis:
+        a = pilot.araknis
+        text += '<p>SSH authenticated. Snapshot retrieved: ' + esc(a['checked_at']) + '</p>'
+        text += '<h3>Login response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['welcome'] or 'No login text returned.') + '</pre>'
+        text += '<h3>CLI help response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['help'] or 'No help text returned. The CLI may require a different help syntax.') + '</pre>'
+        if a['truncated']:
+            text += '<p>Response was truncated at 32 KB.</p>'
+    text += '<p>This check opens SSH and sends only the ? help character. Port and PoE readings are not implemented yet. Responses stay in memory; credentials are not displayed.</p></section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
     if pilot.sonos_error:
@@ -458,6 +510,15 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_page()
                 elif action == 'check':
                     self.send_page(confirmation=pilot.check())
+                elif action == 'araknis-identity':
+                    pilot.araknis_identity()
+                    self.send_page()
+                elif action == 'araknis-trust':
+                    pilot.araknis_trust(params.get('nonce', [''])[0])
+                    self.send_page()
+                elif action == 'araknis-check':
+                    pilot.check_araknis()
+                    self.send_page()
                 elif action == 'sonos':
                     pilot.check_sonos()
                     self.send_page()
@@ -480,13 +541,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_page(400, error=str(exc))
             except Exception:
                 # Paramiko and OS exceptions may include sensitive remote strings.
-                self.send_page(502, error='Connection or command failed. Check the address, credentials, and saved SSH identity. If a reboot was attempted, its outcome may be unknown; no automatic retry was made.')
+                if action.startswith('araknis-'):
+                    self.send_page(502, error='Araknis connection failed. Check the address, SSH port, credentials and saved SSH identity.')
+                else:
+                    self.send_page(502, error='Connection or command failed. Check the address, credentials, and saved SSH identity. If a reboot was attempted, its outcome may be unknown; no automatic retry was made.')
 
 
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.4.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.5.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

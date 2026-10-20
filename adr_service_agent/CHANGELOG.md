@@ -1,3 +1,11 @@
+# 0.6.1
+
+- Use an independent authenticated SSH connection for every diagnostic/help request.
+- Preserve incomplete-command output and status when its syntax-help request fails.
+- Keep unrelated reads independent; abort on authentication or host-key failures.
+- Add regression tests for session loss, independent connections and changed keys.
+- Live validation of this collector fix remains pending.
+
 # 0.6.0
 
 - Add background, on-demand Araknis diagnostic snapshots with six fixed show requests.

@@ -144,9 +144,8 @@ def query(client, command, read_fn=receive, help_only=False):
         channel.close()
 
 
-def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
-    if not keys_path.exists():
-        raise AraknisError('Inspect and approve the Araknis SSH identity first.')
+def diagnostic_request(config, keys_path, command, client_factory, read_fn, help_only=False):
+    """One authenticated SSH connection per request, including help requests."""
     client = client_factory()
     try:
         client.load_host_keys(str(keys_path))
@@ -154,21 +153,39 @@ def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
         client.connect(config['host'], port=config['port'], username=config['username'],
             password=config['password'], timeout=6, banner_timeout=6, auth_timeout=6,
             allow_agent=False, look_for_keys=False)
-        results = []
+        return query(client, command, read_fn, help_only=help_only)
+    finally:
+        client.close()
+
+
+def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
+    if not keys_path.exists():
+        raise AraknisError('Inspect and approve the Araknis SSH identity first.')
+    results = []
+    try:
         for name, command in DIAGNOSTIC_COMMANDS:
             item = {'name': name, 'command': command, 'response': '', 'help': '',
-                'truncated': False, 'status': 'response received'}
+                'truncated': False, 'status': 'response received', 'error': ''}
             try:
-                text, truncated = query(client, command, read_fn)
+                text, truncated = diagnostic_request(config, keys_path, command, client_factory, read_fn)
                 item['response'] = text.replace(config['password'], '[redacted]')
                 item['truncated'] = truncated
                 if not text or re.search(r'(?i)(incomplete command|invalid (input|command)|ambiguous command|unrecognized command|unknown command|syntax error|%\s*error)', text):
                     item['status'] = 'command needs verification'
-                    help_text, help_truncated = query(client, command, read_fn, help_only=True)
-                    item['help'] = help_text.replace(config['password'], '[redacted]')
-                    item['truncated'] |= help_truncated
+                    try:
+                        help_text, help_truncated = diagnostic_request(config, keys_path,
+                            command, client_factory, read_fn, help_only=True)
+                        item['help'] = help_text.replace(config['password'], '[redacted]')
+                        item['truncated'] |= help_truncated
+                    except (paramiko.BadHostKeyException, paramiko.AuthenticationException):
+                        raise
+                    except Exception:
+                        item['error'] = 'Syntax-help read failed. The command response above is preserved.'
+            except (paramiko.BadHostKeyException, paramiko.AuthenticationException):
+                raise
             except Exception:
                 item['status'] = 'read failed'
+                item['error'] = 'Could not complete this independent SSH request. No automatic retry was made.'
             results.append(item)
         return {'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'readings': results}
@@ -176,9 +193,3 @@ def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
         raise AraknisError('Araknis SSH identity changed. Check the switch identity before reconnecting.') from None
     except paramiko.AuthenticationException:
         raise AraknisError('Araknis SSH login rejected. Check the switch username and password in app Configuration.') from None
-    except AraknisError:
-        raise
-    except Exception:
-        raise AraknisError('Araknis SSH connection failed. Check its address, SSH port, credentials and approved identity.') from None
-    finally:
-        client.close()

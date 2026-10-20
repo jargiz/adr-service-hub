@@ -334,7 +334,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.6.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.6.1</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -354,6 +354,8 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for item in pilot.araknis_diagnostics['readings']:
             text += '<h3>' + esc(item['name']) + '</h3><p><code>' + esc(item['command']) + '</code> · ' + esc(item['status']) + '</p>'
             text += '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['response'] or 'No response captured.') + '</pre>'
+            if item.get('error'):
+                text += '<p>' + esc(item['error']) + '</p>'
             if item['help']:
                 text += '<details open><summary>Command syntax help</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['help']) + '</pre></details>'
             if item['truncated']:
@@ -603,7 +605,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.6.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.6.1 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

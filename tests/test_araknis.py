@@ -78,18 +78,21 @@ class AraknisTests(unittest.TestCase):
         channel.sendall.assert_not_called()
         channel.close.assert_called_once()
 
-    def test_snapshot_uses_six_fixed_commands_on_fresh_channels(self):
-        client = Mock()
-        channels = [Mock() for _ in range(6)]
-        client.invoke_shell.side_effect = channels
+    def test_snapshot_uses_fresh_authenticated_connection_for_each_command(self):
+        clients = [Mock() for _ in range(6)]
+        channels = [client.invoke_shell.return_value for client in clients]
+        factory = Mock(side_effect=clients)
         responses = iter([reply for _ in range(6) for reply in [('(switch)#', False), ('test reading\n(switch)#', False)]])
-        result = araknis.snapshot(self.config, self.keys, lambda: client, lambda _: next(responses))
+        result = araknis.snapshot(self.config, self.keys, factory, lambda _: next(responses))
         for channel, (_, command) in zip(channels, araknis.DIAGNOSTIC_COMMANDS):
             channel.sendall.assert_called_once_with((command + '\r').encode())
             channel.close.assert_called_once()
         self.assertEqual(len(result['readings']), 6)
-        client.close.assert_called_once()
-        self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
+        self.assertEqual(factory.call_count, 6)
+        for client in clients:
+            client.connect.assert_called_once()
+            client.close.assert_called_once()
+            self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
 
     def test_incomplete_command_requests_only_its_context_help(self):
         client = Mock()
@@ -111,6 +114,31 @@ class AraknisTests(unittest.TestCase):
         self.assertNotIn(self.config['password'], str(result))
         self.assertEqual(result['readings'][1]['status'], 'read failed')
         self.assertEqual(result['readings'][1]['response'], '')
+
+    def test_help_connection_failure_preserves_response_and_next_check_works(self):
+        clients = [Mock() for _ in range(7)]
+        with patch('araknis.query', side_effect=[('% Incomplete command', False),
+                EOFError('session closed')] + [('reading', False)] * 5):
+            result = araknis.snapshot(self.config, self.keys, Mock(side_effect=clients))
+        first = result['readings'][0]
+        self.assertEqual(first['status'], 'command needs verification')
+        self.assertEqual(first['response'], '% Incomplete command')
+        self.assertIn('preserved', first['error'])
+        self.assertEqual(result['readings'][1]['response'], 'reading')
+        for client in clients:
+            client.connect.assert_called_once()
+            client.close.assert_called_once()
+
+    def test_snapshot_changed_key_aborts_before_further_connections(self):
+        client = Mock()
+        key = paramiko.RSAKey.generate(1024)
+        client.connect.side_effect = paramiko.BadHostKeyException('test', key, key)
+        factory = Mock(return_value=client)
+        with self.assertRaisesRegex(araknis.AraknisError, 'identity changed'):
+            araknis.snapshot(self.config, self.keys, factory)
+        factory.assert_called_once()
+        client.invoke_shell.assert_not_called()
+        client.close.assert_called_once()
 
     def test_background_single_job_no_stale_readings_after_failure(self):
         options = self.root / 'options.json'

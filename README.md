@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.6.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.6.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -158,21 +158,23 @@ Responses are bounded, HTML escaped, kept in memory only and not logged. The
 SSH key is saved separately from the WattBox key. Live switch validation is
 pending; automated tests use simulated SSH clients.
 
-## Araknis diagnostic snapshot (0.6.0)
+## Araknis diagnostic snapshot (0.6.1)
 
 After SSH identity approval, select **Read Araknis diagnostics**. The check runs
 in the background; use **Refresh Araknis results** to view completion. Starting
 another check while one is running does not create a second job. Requests are
 fixed: `show system`, `show env`, `show cpu`, `show interfaces`, `show power`,
-`show poe`. Each uses a fresh SSH channel and requires a recognized command
-prompt. An incomplete/invalid command requests that same fixed command's `?`
-context help on a new channel. There is no arbitrary command field, retry,
+`show poe`. Each uses a fresh authenticated SSH connection and requires a recognized
+command prompt. An incomplete/invalid command requests that same fixed command's `?`
+context help on a new SSH connection. There is no arbitrary command field, retry,
 privilege escalation, running-config read, or switch control.
 
 Responses have an eight-page/32 KB content limit per request and a four-second
 receive limit per page. All six categories are displayed as raw responses,
 including errors or failed reads. No CPU values, port states or PoE watts are
 inferred or fabricated; a successful SSH request is not a device-health verdict.
-Responses stay in memory. Logs contain only completion and response count.
+A failed help request preserves the original response and its status. Other
+requests use independent connections. Authentication and host-key failures abort
+the snapshot. Responses stay in memory; logs contain completion and response count.
 The pilot has verified SSH login and root show-help; diagnostic commands need
 live validation on the selected firmware.

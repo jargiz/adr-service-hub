@@ -99,29 +99,30 @@ def inspect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
 # Fixed read-only requests based on help returned by the pilot switch.
 # No running configuration, credential, config mode, or control requests.
 DIAGNOSTIC_COMMANDS = (
-    ('System', 'show system'),
-    ('Environment', 'show env'),
-    ('CPU', 'show cpu'),
+    ('System', 'show system information'),
+    ('Environment', 'show env all'),
     ('Interfaces', 'show interfaces'),
-    ('Power', 'show power'),
-    ('PoE', 'show poe'),
+    ('Power details', 'show power detail'),
+    ('PoE power', 'show power inline'),
+    ('PoE ports', 'show poe port'),
 )
 
 
-def read_pages(channel, read_fn=receive):
+def read_pages(channel, read_fn=receive, max_pages=8, max_chars=32768):
     parts = []
     total = 0
-    for number in range(8):
+    deadline = time.monotonic() + 90
+    for number in range(max_pages):
         text, truncated = read_fn(channel)
-        remaining = 32768 - total
+        remaining = max_chars - total
         parts.append(text[:remaining])
         total += len(parts[-1])
         more = text.rstrip().endswith('--More--')
-        if truncated or len(text) > remaining or total >= 32768:
+        if truncated or len(text) > remaining or total >= max_chars:
             return '\n'.join(parts), True
         if not more:
             return '\n'.join(parts), False
-        if number == 7:
+        if number == max_pages - 1 or time.monotonic() >= deadline:
             return '\n'.join(parts), True
         channel.sendall(b' ')
     return '\n'.join(parts), True
@@ -138,7 +139,10 @@ def query(client, command, read_fn=receive, help_only=False):
             raise AraknisError('Switch command prompt was not recognized; no diagnostic command sent.')
         request = command + (' ?' if help_only else '\r')
         channel.sendall(request.encode('ascii'))
-        text, truncated = read_pages(channel, read_fn)
+        if command == 'show interfaces' and not help_only:
+            text, truncated = read_pages(channel, read_fn, max_pages=96, max_chars=262144)
+        else:
+            text, truncated = read_pages(channel, read_fn)
         return text, truncated
     finally:
         channel.close()
@@ -158,6 +162,29 @@ def diagnostic_request(config, keys_path, command, client_factory, read_fn, help
         client.close()
 
 
+def parse_interfaces(text):
+    """Extract only explicitly reported fields from complete or partial port blocks."""
+    text = text.replace('--More--', '')
+    headers = list(re.finditer(r'(?m)^\s*(\S+)\s+(administratively down|up|down),\s*line protocol is\s+(up|down)\b', text))
+    ports = []
+    for index, match in enumerate(headers):
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        block = text[match.end():end]
+        speed = re.search(r',\s*(Full|Half)\s+duplex,\s*([0-9.]+\s*[MGT]bps)\b', block, re.I)
+        rx = re.search(r'Reception Counters(.*?)(?:Transmission Counters|\Z)', block, re.S | re.I)
+        tx = re.search(r'Transmission Counters(.*)', block, re.S | re.I)
+        def counter(section, label):
+            value = re.search(r'(?m)^\s*' + re.escape(label) + r'\s*:\s*([0-9]+)\s*$', section.group(1)) if section else None
+            return int(value.group(1)) if value else None
+        ports.append({'port': match.group(1), 'link': match.group(2),
+            'protocol': match.group(3), 'speed': speed.group(2) if speed else None,
+            'duplex': speed.group(1).lower() if speed else None,
+            'rx_errors': counter(rx, 'Error Packets'), 'rx_discards': counter(rx, 'Discarded Packets'),
+            'rx_crc_errors': counter(rx, 'CRC Errors'),
+            'tx_errors': counter(tx, 'Error Packets'), 'tx_discards': counter(tx, 'Discarded Packets')})
+    return ports
+
+
 def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
     if not keys_path.exists():
         raise AraknisError('Inspect and approve the Araknis SSH identity first.')
@@ -170,6 +197,8 @@ def snapshot(config, keys_path, client_factory=paramiko.SSHClient, read_fn=recei
                 text, truncated = diagnostic_request(config, keys_path, command, client_factory, read_fn)
                 item['response'] = text.replace(config['password'], '[redacted]')
                 item['truncated'] = truncated
+                if command == 'show interfaces':
+                    item['ports'] = parse_interfaces(item['response'])
                 if not text or re.search(r'(?i)(incomplete command|invalid (input|command)|ambiguous command|unrecognized command|unknown command|syntax error|%\s*error)', text):
                     item['status'] = 'command needs verification'
                     try:

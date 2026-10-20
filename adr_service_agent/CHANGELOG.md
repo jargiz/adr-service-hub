@@ -1,3 +1,12 @@
+# 0.7.0
+
+- Use system/environment/power command suffixes reported by the pilot CLI help.
+- Remove show cpu, which reports traffic mirroring rather than CPU utilization.
+- Raise bounded interface pagination to 96 pages/256 KB with a 90-second deadline.
+- Show reported interface links, negotiated speeds and cumulative receive counters in a table.
+- Keep raw responses, missing fields and explicit truncation; no inferred health verdicts.
+- New command suffixes and full-interface reads need live validation.
+
 # 0.6.1
 
 - Use an independent authenticated SSH connection for every diagnostic/help request.

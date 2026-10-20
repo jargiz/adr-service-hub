@@ -74,7 +74,7 @@ class AraknisTests(unittest.TestCase):
         client = Mock()
         channel = client.invoke_shell.return_value
         with self.assertRaisesRegex(araknis.AraknisError, 'prompt'):
-            araknis.query(client, 'show system', lambda _: ('Select a menu item:', False))
+            araknis.query(client, 'show system information', lambda _: ('Select a menu item:', False))
         channel.sendall.assert_not_called()
         channel.close.assert_called_once()
 
@@ -163,10 +163,75 @@ class AraknisTests(unittest.TestCase):
         client = Mock()
         channel = client.invoke_shell.return_value
         responses = iter([('(switch)#', False), ('help --More--', False), ('last help', False)])
-        text, truncated = araknis.query(client, 'show power', lambda _: next(responses), help_only=True)
-        self.assertEqual([call.args[0] for call in channel.sendall.call_args_list], [b'show power ?', b' '])
+        text, truncated = araknis.query(client, 'show power inline', lambda _: next(responses), help_only=True)
+        self.assertEqual([call.args[0] for call in channel.sendall.call_args_list], [b'show power inline ?', b' '])
         self.assertFalse(truncated)
         self.assertIn('last help', text)
+
+    def test_interface_parser_preserves_cumulative_counters_and_directions(self):
+        text = """Gi0/1 up, line protocol is up (connected)
+MTU 9216 bytes, Full duplex, 1 Gbps, Auto-Negotiation
+Reception Counters
+   Discarded Packets : 3228964051
+   Error Packets : 1
+--More--
+   CRC Errors : 0
+Transmission Counters
+   Discarded Packets : 7
+   Error Packets : 2
+Gi0/2 down, line protocol is down (not connected)
+Reception Counters
+   Error Packets : 0
+"""
+        ports = araknis.parse_interfaces(text)
+        self.assertEqual(len(ports), 2)
+        self.assertEqual(ports[0]['speed'], '1 Gbps')
+        self.assertEqual(ports[0]['rx_discards'], 3228964051)
+        self.assertEqual(ports[0]['rx_errors'], 1)
+        self.assertEqual(ports[0]['tx_errors'], 2)
+        self.assertEqual(ports[0]['tx_discards'], 7)
+        self.assertEqual(ports[0]['rx_crc_errors'], 0)
+        self.assertEqual(ports[1]['link'], 'down')
+        self.assertIsNone(ports[1]['speed'])
+        self.assertIsNone(ports[1]['tx_errors'])
+
+    def test_interface_parser_does_not_invent_missing_partial_fields(self):
+        text = 'Gi0/3 up, line protocol is up (connected)\nMTU 9216 bytes, Full duplex, 2.5 Gbps, Auto-Negotiation\nGi0/4 up, line protocol is up (connected)'
+        ports = araknis.parse_interfaces(text)
+        self.assertEqual(ports[0]['speed'], '2.5 Gbps')
+        self.assertIsNone(ports[0]['rx_errors'])
+        self.assertIsNone(ports[1]['speed'])
+        self.assertEqual(araknis.parse_interfaces('% Invalid input'), [])
+
+    def test_interface_request_reads_more_than_eight_pages(self):
+        client = Mock()
+        responses = iter([('(switch)#', False)] + [('page --More--', False)] * 11 + [('Gi0/24 down, line protocol is down\n(switch)#', False)])
+        text, truncated = araknis.query(client, 'show interfaces', lambda _: next(responses))
+        self.assertIn('Gi0/24', text)
+        self.assertFalse(truncated)
+        self.assertEqual(client.invoke_shell.return_value.sendall.call_count, 12)
+
+    def test_extended_pager_remains_bounded(self):
+        channel = Mock()
+        text, truncated = araknis.read_pages(channel, lambda _: ('page --More--', False), max_pages=96, max_chars=262144)
+        self.assertTrue(truncated)
+        self.assertEqual(len(text.splitlines()), 96)
+        self.assertEqual(channel.sendall.call_count, 95)
+
+    def test_interface_table_keeps_zero_distinct_from_missing(self):
+        options = self.root / 'options.json'
+        options.write_text(json.dumps(self.options))
+        pilot = Pilot(self.root, options)
+        ports = araknis.parse_interfaces('Gi0/1 up, line protocol is up\nReception Counters\n Error Packets : 0')
+        pilot.araknis_diagnostics = {'checked_at': 'test', 'readings': [{
+            'name': 'Interfaces', 'command': 'show interfaces', 'response': '<raw>',
+            'status': 'response received', 'help': '', 'ports': ports, 'truncated': True}]}
+        rendered = page(pilot)
+        self.assertIn('<td>0</td>', rendered)
+        self.assertIn('Not reported', rendered)
+        self.assertIn('&lt;raw&gt;', rendered)
+        self.assertNotIn('<raw>', rendered)
+        self.assertIn('Response reached the page or size limit', rendered)
 
     def test_identity_required_before_login(self):
         self.keys.unlink()

@@ -334,7 +334,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.6.1</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.7.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -353,7 +353,18 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<h3>Araknis diagnostic snapshot</h3><p>Completed: ' + esc(pilot.araknis_diagnostics['checked_at']) + '</p>'
         for item in pilot.araknis_diagnostics['readings']:
             text += '<h3>' + esc(item['name']) + '</h3><p><code>' + esc(item['command']) + '</code> · ' + esc(item['status']) + '</p>'
+            if item.get('ports'):
+                text += '<div style="overflow-x:auto"><table><tr><th>Port</th><th>Link / protocol</th><th>Speed</th><th>RX errors</th><th>RX discards</th></tr>'
+                for port in item['ports']:
+                    text += '<tr>'
+                    for value in (port['port'], port['link'] + ' / ' + port['protocol'], port['speed'], port['rx_errors'], port['rx_discards']):
+                        text += '<td>' + esc(value if value is not None else 'Not reported') + '</td>'
+                    text += '</tr>'
+                text += '</table></div><p>Showing ' + esc(len(item['ports'])) + ' reported interfaces. Errors and discards are cumulative counters, not current rates or a diagnosis. Link speed is the negotiated connection speed, not a bandwidth test.</p>'
+                text += '<details><summary>Raw interface response and remaining counters</summary>'
             text += '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item['response'] or 'No response captured.') + '</pre>'
+            if item.get('ports'):
+                text += '</details>'
             if item.get('error'):
                 text += '<p>' + esc(item['error']) + '</p>'
             if item['help']:
@@ -369,7 +380,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<h3>Show-command help response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['help'] or 'No help text returned. The CLI may require a different help syntax.') + '</pre>'
         if a['truncated']:
             text += '<p>Response reached the page or size limit.</p>'
-    text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. The diagnostic button requests system, environment, CPU, interface, power and PoE information using fixed show commands. Unsupported syntax is shown with help where available. Responses stay in memory; credentials are not displayed.</p></section>'
+    text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. The diagnostic button requests system, environment, interface, power and PoE information using fixed show commands. Unsupported syntax is shown with help where available. Responses stay in memory; credentials are not displayed.</p></section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
     if pilot.sonos_error:
@@ -605,7 +616,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.6.1 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.7.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

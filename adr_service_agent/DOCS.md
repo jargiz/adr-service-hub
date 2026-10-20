@@ -103,23 +103,32 @@ Responses are bounded, HTML escaped, kept in memory only and not logged. The
 SSH key is saved separately from the WattBox key. Live switch validation is
 pending; automated tests use simulated SSH clients.
 
-## Araknis diagnostic snapshot (0.6.1)
+## Araknis diagnostic snapshot (0.7.0)
 
 After SSH identity approval, select **Read Araknis diagnostics**. The check runs
 in the background; use **Refresh Araknis results** to view completion. Starting
 another check while one is running does not create a second job. Requests are
-fixed: `show system`, `show env`, `show cpu`, `show interfaces`, `show power`,
-`show poe`. Each uses a fresh authenticated SSH connection and requires a recognized
+fixed: `show system information`, `show env all`, `show interfaces`,
+`show power detail`, `show power inline`, `show poe port`. Each uses a fresh authenticated SSH connection and requires a recognized
 command prompt. An incomplete/invalid command requests that same fixed command's `?`
 context help on a new SSH connection. There is no arbitrary command field, retry,
 privilege escalation, running-config read, or switch control.
 
-Responses have an eight-page/32 KB content limit per request and a four-second
-receive limit per page. All six categories are displayed as raw responses,
-including errors or failed reads. No CPU values, port states or PoE watts are
-inferred or fabricated; a successful SSH request is not a device-health verdict.
+Most responses have an eight-page/32 KB content limit. Interface details allow
+96 pages/256 KB so the full switch can fit. Reads have a four-second limit per
+page and a 90-second pagination deadline. Truncation is displayed explicitly. All six categories retain raw responses,
+including errors or failed reads. Interface links, speeds and counters also appear in a parsed table, preserving
+missing values as not reported. Counters are cumulative; no rates or diagnoses
+are inferred. The root `show cpu` query was removed because it reports mirroring,
+not utilization. Environment output may report resource thresholds rather than
+current utilization. No CPU values, port states or PoE watts are fabricated; a successful SSH request is not a device-health verdict.
 A failed help request preserves the original response and its status. Other
 requests use independent connections. Authentication and host-key failures abort
 the snapshot. Responses stay in memory; logs contain completion and response count.
 The pilot has verified SSH login and root show-help; diagnostic commands need
 live validation on the selected firmware.
+
+The 0.7.0 command suffixes come from the pilot's own CLI help. Live validation
+of those requests and completion of the full interface read are still pending.
+The supported interface output format has been tested with sanitized fixtures
+based on the observed switch format; other formats remain available as raw text.

@@ -1,3 +1,13 @@
+# 0.4.0
+
+- Add read-only UniFi diagnostics with integration and device selection.
+- Read only enabled sensor/binary_sensor entities for the selected device/entry.
+- Show values with units, snapshot/update timestamps, disabled sensor names,
+  and explicit unavailable/read-failed states without assuming network health.
+- Never send gateway, firewall, switch, PoE, restart or other network commands.
+- No new API permissions or manual controller credentials are required.
+- Add seven simulated connector tests. Live UniFi display testing is pending.
+
 # 0.3.0
 
 - Add read-only Ruckus diagnostics with explicit config-entry selection.

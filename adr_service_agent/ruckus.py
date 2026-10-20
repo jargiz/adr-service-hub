@@ -24,8 +24,10 @@ def token_value():
     return token
 
 
-def entries(token):
-    req = Request('http://supervisor/core/api/config/config_entries/entry?domain=' + DOMAIN,
+def entries(token, domain=DOMAIN):
+    if domain not in (DOMAIN, 'unifi'):
+        raise RuckusError('Unsupported integration domain.')
+    req = Request('http://supervisor/core/api/config/config_entries/entry?domain=' + domain,
         headers={'Authorization': 'Bearer ' + token}, method='GET')
     with build_opener(ProxyHandler({}), NoRedirect()).open(req, timeout=6) as response:
         raw = response.read(1024 * 1024 + 1)
@@ -36,7 +38,7 @@ def entries(token):
         raise RuckusError('Unexpected integration list response.')
     return [{'entry_id': e['entry_id'], 'title': e.get('title', e['entry_id']),
         'state': e.get('state', 'unknown'), 'disabled_by': e.get('disabled_by')}
-        for e in data if e.get('domain') == DOMAIN and isinstance(e.get('entry_id'), str)]
+        for e in data if e.get('domain') == domain and isinstance(e.get('entry_id'), str)]
 
 
 def registries(token):

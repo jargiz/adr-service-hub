@@ -58,6 +58,22 @@ cause. Deeper controller diagnostics require a later direct integration.
 No extra credentials or API permissions are needed beyond the existing Core API
 grant. Entry metadata, entity/device registries and individual entity states are
 read; no HA configuration actions or Ruckus control commands are implemented.
+
+## UniFi checks (0.4.0)
+
+Select **Check UniFi**, choose the integration if requested, select the gateway
+in the device menu, then select **Check UniFi** again. The app remembers the
+selection in its own data. No UniFi credentials need to be entered in this app.
+
+Values are read only from enabled sensor/binary_sensor entities on the selected
+device and integration. CPU, memory, uptime, temperature and WAN latency appear
+when available in HA. Disabled sensors are listed separately; the app never
+enables them, controls network entities, changes firewall rules or restarts gear.
+
+Values include units and HA timestamps. Last state update is not a heartbeat.
+Unknown/unavailable/failed readings are retained as such, not converted to zero.
+WAN latency is not bandwidth or download speed. Non-UniFi switch internals and
+Ruckus Wi-Fi health require separate diagnostics. No new API permissions are used.
 No Home Assistant configuration, automations or existing integrations are edited.
 All credentials stay in app configuration; include them only in protected backups.
 

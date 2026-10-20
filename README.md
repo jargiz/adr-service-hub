@@ -1,7 +1,8 @@
 # ADR Service Hub pilot
 
-Version 0.3.0 is a local Home Assistant app for a single WattBox test device,
-read-only Sonos diagnostics and Ruckus integration/presence diagnostics.
+Version 0.4.0 is a local Home Assistant app for a single WattBox test device,
+read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
+sensor diagnostics.
 It is the first equipment connector, not the completed phone voice assistant.
 
 ## Included
@@ -89,6 +90,29 @@ raw integration configuration and direct controller sessions are not accessed.
 The selected-entry ID is saved locally; network and presence readings remain in
 memory only. The service log contains check time and reading count, not client
 MACs, addresses or presence history. No new API permission is added in 0.3.0.
+
+## UniFi sensor diagnostics (0.4.0)
+
+Configure UniFi Network in Home Assistant first. In the ADR app select **Check
+UniFi**, select the integration if multiple entries exist, choose your gateway
+from the device selector, and check again. The app remembers this local selection.
+
+Only enabled sensor and binary_sensor entities belonging to that exact UniFi
+entry and device are read. The app does not read unrelated clients' states,
+control entities, controller credentials or raw controller configuration. Saved
+device metadata is used to populate the selector. Disabled sensor names are
+listed separately; the user enables desired sensors in Home Assistant.
+
+Reported values include their units and HA update timestamps. CPU, memory,
+uptime, temperature and WAN latency appear only where HA exposes them as enabled
+entities; no fields or values are fabricated. Values are snapshots of HA states,
+not fresh network tests. Latency does not measure internet download speed and
+cannot establish whether Ruckus Wi-Fi or an Araknis switch is healthy.
+
+No UniFi control commands are implemented. The app cannot restart the gateway,
+change firewall/network settings or cycle a PoE port. No permissions beyond the
+existing Home Assistant Core API grant are added. The selection is saved locally;
+readings stay in memory and are not logged as network/client history.
 
 ## Removing the pilot
 

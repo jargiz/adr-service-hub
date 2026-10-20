@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
+from unifi import collect as collect_unifi, UniFiError
 
 
 def atomic_json(path, value):
@@ -79,6 +80,15 @@ class Pilot:
         self.ruckus_error = None
         self.ruckus_entries = []
         self.ruckus_selection = ''
+        self.unifi = None
+        self.unifi_error = None
+        self.unifi_selection = {}
+        try:
+            self.unifi_selection = json.loads((self.data / 'unifi_selection.json').read_text())
+            if not isinstance(self.unifi_selection, dict):
+                self.unifi_selection = {}
+        except (OSError, ValueError):
+            pass
         try:
             self.ruckus_selection = json.loads((self.data / 'ruckus_selection.json').read_text())['entry_id']
         except (OSError, ValueError, KeyError):
@@ -99,6 +109,23 @@ class Pilot:
     def ready(self):
         if self.config is None:
             raise ProtocolError(self.config_error)
+
+    def check_unifi(self, entry_id='', device_id=''):
+        self.unifi = None
+        self.unifi_error = None
+        try:
+            self.unifi = collect_unifi(entry_id or self.unifi_selection.get('entry_id', ''),
+                device_id or self.unifi_selection.get('device_id', ''))
+            if self.unifi['entry'] and self.unifi['device']:
+                self.unifi_selection = {'entry_id': self.unifi['entry']['entry_id'],
+                    'device_id': self.unifi['device']['id']}
+                atomic_json(self.data / 'unifi_selection.json', self.unifi_selection)
+            self.audit('unifi_status_read', f"{len(self.unifi['sensors'])} reading(s)")
+        except UniFiError as exc:
+            self.unifi_error = str(exc)
+        except Exception:
+            self.unifi = None
+            self.unifi_error = 'Could not read UniFi information. No device actions were sent.'
 
     def check_ruckus(self, entry_id=''):
         self.ruckus = None
@@ -237,7 +264,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>WattBox, Sonos and Ruckus pilot · 0.3.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.4.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
@@ -294,6 +321,54 @@ def page(pilot, confirmation=None, candidate=None, error=None):
             elif not r['entities']:
                 text += '<p>No enabled diagnostic entities were found for this entry.</p>'
         text += '<p>Presence states (home/not_home) describe what the integration reports; they do not establish AP health, signal strength, internet performance, or the reason for a disconnection. No Ruckus settings were changed.</p>'
+    text += '</section>'
+    text += '<section><h2>UniFi diagnostics</h2><p>Read enabled sensor states for a selected UniFi device through Home Assistant.</p>'
+    extra = ''
+    u = pilot.unifi
+    if u and u['entries']:
+        extra = '<label>UniFi integration <select name="entry_id" required><option value="">Select an entry</option>'
+        for e in u['entries']:
+            selected = ' selected' if u['entry'] and e['entry_id'] == u['entry']['entry_id'] else ''
+            extra += '<option value="' + esc(e['entry_id']) + '"' + selected + '>' + esc(e['title']) + ' — ' + esc(e['state']) + '</option>'
+        extra += '</select></label>'
+    if u and u['devices']:
+        extra += '<label>Device <select name="device_id" required><option value="">Select the gateway</option>'
+        for d in u['devices']:
+            selected = ' selected' if u['device'] and d['id'] == u['device']['id'] else ''
+            extra += '<option value="' + esc(d['id']) + '"' + selected + '>' + esc(d['name']) + ' · ' + esc(d['model'] or 'Model not reported') + '</option>'
+        extra += '</select></label>'
+    text += form('unifi', 'Check UniFi', extra)
+    if pilot.unifi_error:
+        text += '<p>' + esc(pilot.unifi_error) + '</p>'
+    if u is not None:
+        if not u['entries']:
+            text += '<p>No UniFi Network entries were discovered. Configure UniFi Network in Devices &amp; services first.</p>'
+        elif not u['entry']:
+            text += '<p>Select the UniFi integration to use.</p>'
+        else:
+            text += '<p>HA integration state: ' + esc(u['entry']['state']) + '</p>'
+            if u['entry']['state'] != 'loaded' or u['entry'].get('disabled_by'):
+                text += '<p>This entry is not loaded and enabled. Retained sensor readings are not shown as current.</p>'
+            elif not u['devices']:
+                text += '<p>No devices with supported sensor entities were discovered for this entry.</p>'
+            elif not u['device']:
+                text += '<p>Select Cloud Gateway Fiber above, then check again.</p>'
+            else:
+                text += '<h3>' + esc(u['device']['name']) + '</h3><p>Snapshot retrieved: ' + esc(u['checked_at']) + '</p>'
+                text += '<table><tr><th>Reading</th><th>Reported value</th><th>Last HA update</th></tr>'
+                for s in u['sensors']:
+                    value = str(s['state'])
+                    if s['unit'] is not None and s['state'] not in ('unknown', 'unavailable', 'read failed'):
+                        value += ' ' + str(s['unit'])
+                    text += '<tr><td>' + esc(s['name']) + '</td><td>' + esc(value) + '</td><td>' + esc(s['last_updated'] or 'Not reported') + '</td></tr>'
+                text += '</table>'
+                if not u['sensors']:
+                    text += '<p>No enabled sensor readings are available for this device.</p>'
+                if u['truncated']:
+                    text += '<p>Showing the first 64 of ' + esc(u['sensor_count']) + ' enabled sensor entities.</p>'
+                if u['disabled_sensors']:
+                    text += '<details><summary>Disabled sensors (' + esc(len(u['disabled_sensors'])) + ')</summary><p>' + esc(', '.join(u['disabled_sensors'])) + '</p><p>Enable only the needed sensors in Home Assistant; this app does not change entity settings.</p></details>'
+        text += '<p>Values are reported by the Home Assistant UniFi integration, not fresh tests run by this app. WAN latency is not internet download speed. Last-update time is not a heartbeat. Araknis and Ruckus switches need their own connections for internal switch diagnostics.</p>'
     text += '</section>'
     if pilot.config is None:
         return text + '<section><p>' + esc(pilot.config_error) + '</p></section></main></html>'
@@ -389,6 +464,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'ruckus':
                     pilot.check_ruckus(params.get('entry_id', [''])[0])
                     self.send_page()
+                elif action == 'unifi':
+                    pilot.check_unifi(params.get('entry_id', [''])[0], params.get('device_id', [''])[0])
+                    self.send_page()
                 elif action == 'reboot':
                     if params.get('confirm') != ['yes']:
                         raise ProtocolError('Confirm the outlet mapping before rebooting')
@@ -408,7 +486,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.3.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.4.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

@@ -1,3 +1,11 @@
+# 0.9.0
+
+- Add background read-only discovery of existing Crestron HA integrations.
+- Inventory the selected integration's devices/entities and exposed states.
+- Preserve disabled, unknown, unavailable and failed readings without health inference.
+- Add a Crestron JSON report download without processor credentials or new permissions.
+- Live compatibility with the pilot integration remains pending.
+
 # 0.8.1
 
 - Normalize terminal controls before recognizing pager/help response boundaries.

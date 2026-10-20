@@ -165,3 +165,36 @@ verbose interface details/counters until the other discovery paths finish.
 Avoid redundant individual CPU/RAM/fan/flash reads once env all is captured.
 The same read-only allowlist, authentication and collection limits apply.
 Live validation of the timing changes remains pending.
+
+## Crestron discovery through Home Assistant (0.9.0)
+
+Select **Discover Crestron readings**, allow the background check to complete,
+then refresh. One configured Crestron entry is selected automatically; if there
+are multiple entries, select the one to inspect and check again. An invalid
+saved selection is not silently replaced. Select **Download Crestron report**
+to save one JSON file containing inventory and exposed readings.
+
+This uses the existing Home Assistant integration, not a new direct processor
+connection. It queries config-entry metadata, device/entity registries and only
+GET states for the selected entry and matching Crestron platform. Crestron-like
+domains are identified by domain, not guessed from names. Failed/disabled
+entries do not supply retained states as current data. Disabled devices/entities
+are inventoried but not queried. Unsupported entities (buttons, scenes, etc.)
+are inventoried without state reads. No service calls or configuration writes
+are sent; no new HA permissions or processor credentials are needed.
+
+The bounded check reads up to 128 enabled supported entities with eight workers,
+prioritizing sensors/binary sensors. Device inventory is limited to 512 records
+and entity inventory to 1024; limits and total counts are explicit. Device
+registry software versions are metadata, not fresh firmware queries. Only
+allowlisted scalar state attributes are retained, including exposed connectivity,
+battery/sensor states, HVAC, shade position, light level and volume/mute/source
+where available. No blanket online/offline or functional-health verdict is
+inferred from entity state, missing values or update timestamps.
+
+Selection is saved only in this app's data. Snapshots remain in memory; logs
+contain the reading count, not device names or state history. Downloads require
+HA ingress and CSRF, include only the selected connector's discovery data, and
+exclude config-entry data/options, HA tokens and processor credentials. Reports
+may include private room/device names and operational states. Live discovery on
+the pilot's installed integration remains pending.

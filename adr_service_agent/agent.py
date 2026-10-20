@@ -13,6 +13,7 @@ from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 from unifi import collect as collect_unifi, UniFiError
+from crestron import collect as collect_crestron, report_payload as crestron_report_payload, CrestronError
 from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, discover as discover_araknis, report_payload as araknis_report_payload, AraknisError
 
 
@@ -93,6 +94,14 @@ class Pilot:
         self.ruckus_error = None
         self.ruckus_entries = []
         self.ruckus_selection = ''
+        self.crestron = None
+        self.crestron_error = None
+        self.crestron_running = False
+        self.crestron_selection = ''
+        try:
+            self.crestron_selection = json.loads((self.data / 'crestron_selection.json').read_text()).get('entry_id', '')
+        except (OSError, ValueError, AttributeError):
+            pass
         self.unifi = None
         self.unifi_error = None
         self.unifi_selection = {}
@@ -186,6 +195,37 @@ class Pilot:
             worker.start()
         except Exception:
             self.araknis_running = False
+            raise
+
+    def start_crestron_discovery(self, entry_id=''):
+        if self.crestron_running:
+            return
+        selected = entry_id or self.crestron_selection
+        self.crestron = None
+        self.crestron_error = None
+        self.crestron_running = True
+        def run():
+            result, error = None, None
+            try:
+                result = collect_crestron(selected)
+                if result['entry']:
+                    atomic_json(self.data / 'crestron_selection.json', {'entry_id': result['entry']['entry_id']})
+            except CrestronError as exc:
+                error = str(exc)
+            except Exception:
+                error = 'Crestron discovery failed. No device actions or configuration changes were requested.'
+            with self.lock:
+                self.crestron = result
+                self.crestron_error = error
+                self.crestron_running = False
+                if result:
+                    if result['entry']:
+                        self.crestron_selection = result['entry']['entry_id']
+                    self.audit('crestron_status_read', str(len(result['readings'])) + ' reading(s)')
+        try:
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self.crestron_running = False
             raise
 
     def check_unifi(self, entry_id='', device_id=''):
@@ -342,7 +382,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.8.1</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.9.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -397,6 +437,51 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         if a['truncated']:
             text += '<p>Response reached the page or size limit.</p>'
     text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. The diagnostic button requests system, environment, interface, power and PoE information using fixed show commands. Unsupported syntax is shown with help where available. Responses stay in memory; credentials are not displayed.</p></section>'
+    text += '<section><h2>Crestron discovery</h2><p>Inspect your existing Crestron integration in Home Assistant. No additional processor credentials are needed.</p>'
+    extra = ''
+    c_report = pilot.crestron
+    if c_report and c_report['entries']:
+        extra = '<label>Crestron integration <select name="entry_id" required><option value="">Select an integration</option>'
+        for entry in c_report['entries']:
+            selected = ' selected' if c_report['entry'] and entry['entry_id'] == c_report['entry']['entry_id'] else ''
+            extra += '<option value="' + esc(entry['entry_id']) + '"' + selected + '>' + esc(entry['title']) + ' · ' + esc(entry['domain']) + ' · ' + esc(entry['state']) + '</option>'
+        extra += '</select></label>'
+    text += form('crestron-discover', 'Discover Crestron readings', extra)
+    text += form('refresh', 'Refresh Crestron results')
+    if pilot.crestron_running:
+        text += '<p>Reading Crestron through Home Assistant. Allow up to a couple of minutes, then refresh results.</p>'
+    if pilot.crestron_error:
+        text += '<p>' + esc(pilot.crestron_error) + '</p>'
+    if c_report:
+        text += form('crestron-report', 'Download Crestron report')
+        text += '<p>Snapshot retrieved: ' + esc(c_report['checked_at']) + '</p>'
+        if not c_report['entries']:
+            text += '<p>No configured Crestron integration entries were found. This does not establish whether the processor is reachable. The report records what discovery found.</p>'
+        elif not c_report['entry']:
+            text += '<p>Select the integration above and run discovery again.</p>'
+        elif c_report['entry']['state'] != 'loaded' or c_report['entry'].get('disabled_by'):
+            text += '<p>Selected integration is not loaded and enabled. Retained entity states are not presented as current readings.</p>'
+        else:
+            text += '<p>' + esc(len(c_report['devices'])) + ' registered devices · ' + esc(c_report['entity_count']) + ' entities · ' + esc(c_report['disabled_count']) + ' disabled · ' + esc(len(c_report['readings'])) + ' readings.</p>'
+            if c_report['truncated']:
+                text += '<p>Reading the first 128 enabled supported entities, prioritizing diagnostic sensors. The report includes inventory and the total count.</p>'
+            if c_report['inventory_truncated']:
+                text += '<p>Device/entity inventory exceeded its limit; the report is partial.</p>'
+            text += '<details><summary>Registered devices</summary><table><tr><th>Device</th><th>Model</th><th>Registry software version</th></tr>'
+            for device in c_report['devices']:
+                text += '<tr><td>' + esc(device['name']) + '</td><td>' + esc(device['model'] or 'Not reported') + '</td><td>' + esc(device['registry_sw_version'] or 'Not reported') + '</td></tr>'
+            text += '</table></details><table><tr><th>Reading</th><th>HA reported state</th><th>Last HA update</th></tr>'
+            for reading in c_report['readings']:
+                value = str(reading['state'])
+                unit = reading['attributes'].get('unit_of_measurement')
+                if unit and reading['state'] not in ('unknown', 'unavailable', 'read failed'):
+                    value += ' ' + str(unit)
+                text += '<tr><td>' + esc(reading['name']) + '</td><td>' + esc(value) + '</td><td>' + esc(reading['last_updated'] or 'Not reported') + '</td></tr>'
+            text += '</table>'
+            if not c_report['readings']:
+                text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
+        text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the processor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
+    text += '</section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
     if pilot.sonos_error:
@@ -558,6 +643,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_crestron_report(self):
+        pilot = self.server.pilot
+        if pilot.crestron_running or not pilot.crestron:
+            raise ProtocolError('Complete Crestron discovery before downloading its report.')
+        body = json.dumps(crestron_report_payload(pilot.crestron), indent=2, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Disposition', 'attachment; filename="ADR-Crestron-Discovery.json"')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(body)
+
     def authorized(self):
         # Do not trust spoofable forwarded headers; enforce the actual peer.
         if self.client_address[0] != '172.30.32.2':
@@ -622,6 +721,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'araknis-check':
                     pilot.check_araknis()
                     self.send_page()
+                elif action == 'crestron-discover':
+                    pilot.start_crestron_discovery(params.get('entry_id', [''])[0])
+                    self.send_page()
+                elif action == 'crestron-report':
+                    self.send_crestron_report()
                 elif action == 'sonos':
                     pilot.check_sonos()
                     self.send_page()
@@ -653,7 +757,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.8.1 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.9.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

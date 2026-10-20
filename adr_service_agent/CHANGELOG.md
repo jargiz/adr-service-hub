@@ -1,3 +1,9 @@
+# 0.5.1
+
+- Request `show ?` context help instead of root CLI help.
+- Advance explicit pager prompts, limited to eight pages and 32 KB of content.
+- Add simulated pager and output-bound tests; live show-help testing pending.
+
 # 0.5.0
 
 - Add optional Araknis SSH configuration and separate host-key approval.

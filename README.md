@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.5.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.5.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -136,7 +136,7 @@ Home Assistant app configuration and ingress:
 https://developers.home-assistant.io/docs/apps/configuration/
 https://developers.home-assistant.io/docs/apps/ingress/
 
-## Araknis SSH inspection (0.5.0)
+## Araknis SSH inspection (0.5.1)
 
 Configure `araknis_host`, `araknis_ssh_port` (22), `araknis_username` and
 `araknis_password` in the app Configuration tab, save and restart only this app.
@@ -147,7 +147,9 @@ protected backups; no switch credentials are committed to this repository.
 Open the Web UI, inspect the Araknis SSH identity and explicitly approve its
 first-use key. Compare the fingerprint independently when available. A changed
 saved key is rejected. Then test login and read CLI help. This opens a bounded
-SSH session and sends only `?` without a newline. It does not send configuration,
+SSH session and sends `show ?` without a newline to request context help.
+It advances only explicit `--More--` pager prompts with a space, with an
+eight-page and 32 KB content limit. It does not send configuration,
 restart, PoE or arbitrary user-entered commands. No automatic retries or startup
 connections occur. This stage verifies login and discovers the CLI, not switch
 health. Port/PoE telemetry requires a later verified command implementation.

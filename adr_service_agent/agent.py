@@ -301,7 +301,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.5.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.5.1</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
@@ -314,10 +314,10 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         a = pilot.araknis
         text += '<p>SSH authenticated. Snapshot retrieved: ' + esc(a['checked_at']) + '</p>'
         text += '<h3>Login response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['welcome'] or 'No login text returned.') + '</pre>'
-        text += '<h3>CLI help response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['help'] or 'No help text returned. The CLI may require a different help syntax.') + '</pre>'
+        text += '<h3>Show-command help response</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(a['help'] or 'No help text returned. The CLI may require a different help syntax.') + '</pre>'
         if a['truncated']:
-            text += '<p>Response was truncated at 32 KB.</p>'
-    text += '<p>This check opens SSH and sends only the ? help character. Port and PoE readings are not implemented yet. Responses stay in memory; credentials are not displayed.</p></section>'
+            text += '<p>Response reached the page or size limit.</p>'
+    text += '<p>This check requests show-command help using show ? and advances up to eight explicit pager pages. Port and PoE readings are not implemented yet. Responses stay in memory; credentials are not displayed.</p></section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
     if pilot.sonos_error:
@@ -550,7 +550,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.5.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.5.1 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

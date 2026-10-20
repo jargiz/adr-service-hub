@@ -50,6 +50,28 @@ def receive(channel, duration=4):
     return value, truncated
 
 
+def show_help(channel, read_fn=receive):
+    """Request context help only; advance at most seven explicit pager prompts."""
+    channel.sendall(b'show ?')
+    parts = []
+    total = 0
+    for page_number in range(8):
+        text, truncated = read_fn(channel)
+        remaining = 32768 - total
+        parts.append(text[:remaining])
+        total += len(parts[-1])
+        more = text.rstrip().endswith('--More--')
+        if truncated or len(text) > remaining or total >= 32768:
+            return '\n'.join(parts), True
+        if not more:
+            return '\n'.join(parts), False
+        if page_number == 7:
+            return '\n'.join(parts), True
+        # Space is sent only in response to an explicit pager marker.
+        channel.sendall(b' ')
+    return '\n'.join(parts), True
+
+
 def inspect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receive):
     if not keys_path.exists():
         raise AraknisError('Inspect and approve the Araknis SSH identity first.')
@@ -63,10 +85,8 @@ def inspect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
         channel = client.invoke_shell(width=160, height=100)
         channel.settimeout(1)
         welcome, first_truncated = read_fn(channel)
-        # The only outbound CLI input is help. No arbitrary command input,
-        # privilege escalation, paging responses, or configuration commands.
-        channel.sendall(b'?')
-        help_text, help_truncated = read_fn(channel)
+        # No newline executes a command. Read context help and bounded pages.
+        help_text, help_truncated = show_help(channel, read_fn)
         # Do not display a password even if an unexpected server echoes it.
         def redact(value):
             return value.replace(config['password'], '[redacted]')

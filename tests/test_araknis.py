@@ -29,12 +29,39 @@ class AraknisTests(unittest.TestCase):
         channel = client.invoke_shell.return_value
         responses = iter([('Switch>', False), ('show help', False)])
         result = araknis.inspect(self.config, self.keys, lambda: client, lambda _: next(responses))
-        channel.sendall.assert_called_once_with(b'?')
+        channel.sendall.assert_called_once_with(b'show ?')
         client.close.assert_called_once()
         self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
         self.assertFalse(client.connect.call_args.kwargs['allow_agent'])
         self.assertFalse(client.connect.call_args.kwargs['look_for_keys'])
         self.assertEqual(result['help'], 'show help')
+
+    def test_pager_advances_only_after_explicit_marker(self):
+        channel = Mock()
+        replies = iter([('first --More--', False), ('second --More--', False), ('last', False)])
+        text, truncated = araknis.show_help(channel, lambda _: next(replies))
+        self.assertEqual([call.args[0] for call in channel.sendall.call_args_list], [b'show ?', b' ', b' '])
+        self.assertIn('last', text)
+        self.assertFalse(truncated)
+
+    def test_pager_bounded_even_if_switch_never_stops(self):
+        channel = Mock()
+        text, truncated = araknis.show_help(channel, lambda _: ('next --More--', False))
+        self.assertTrue(truncated)
+        self.assertEqual(channel.sendall.call_count, 8)
+        self.assertEqual(len(text.splitlines()), 8)
+
+    def test_no_pager_space_for_error_or_embedded_marker(self):
+        channel = Mock()
+        araknis.show_help(channel, lambda _: ('--More-- is not a pager here\n(switch)#', False))
+        channel.sendall.assert_called_once_with(b'show ?')
+
+    def test_help_output_total_bound(self):
+        channel = Mock()
+        text, truncated = araknis.show_help(channel, lambda _: ('x' * 20000 + '--More--', False))
+        self.assertTrue(truncated)
+        self.assertLessEqual(len(text), 32769)
+        self.assertEqual(channel.sendall.call_count, 2)
 
     def test_identity_required_before_login(self):
         self.keys.unlink()

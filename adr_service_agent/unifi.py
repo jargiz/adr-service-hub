@@ -43,7 +43,7 @@ def collect(entry_id='', device_id='', token=None, entries_fn=entries,
         token = token if token is not None else token_value()
         available = entries_fn(token, domain='unifi')
         entry = next((e for e in available if e['entry_id'] == entry_id), None)
-        if entry is None and len(available) == 1:
+        if not entry_id and entry is None and len(available) == 1:
             entry = available[0]
         result = {'entries': available, 'entry': entry, 'devices': [], 'device': None,
             'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
@@ -60,7 +60,7 @@ def collect(entry_id='', device_id='', token=None, entries_fn=entries,
                     'model': d.get('model')})
         result['devices'].sort(key=lambda d: str(d['name']).casefold())
         device = next((d for d in result['devices'] if d['id'] == device_id), None)
-        if device is None and len(result['devices']) == 1:
+        if not device_id and device is None and len(result['devices']) == 1:
             device = result['devices'][0]
         result['device'] = device
         if device is None:

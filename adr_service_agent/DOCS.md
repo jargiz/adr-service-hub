@@ -275,3 +275,33 @@ remain in memory; logs include only reading counts. Live Control4 discovery and
 report compatibility remain pending.
 
 Reference: https://www.home-assistant.io/integrations/control4/
+
+
+## Combined service report (0.12.0)
+
+Click **Run All Checks**, wait several minutes, then **Refresh service report**.
+Download **ADR-Service-Report.json** for a single report covering WattBox, Sonos,
+Ruckus, UniFi, Crestron, Control4, Araknis and CP4-R. It runs sequentially in the
+background and continues when one system fails or needs setup. Existing SSH
+identities must already be approved. Existing saved HA selections are used;
+Ruckus requires explicit selection. If an HA integration/device needs selection,
+run its individual check first. Combined results do not replace individual panels.
+
+“Verified” means the specified read succeeded, not full equipment health.
+Unavailable/unknown states, partial reads and invalid volume values are findings
+to review. Missing setup or failed reads remain unverified. Per-check timestamps
+record the collection window; HA state age is not a heartbeat. Off/idle is not
+offline. CPU/Zigbee/full connectivity limits of the individual checks still apply.
+
+A second successful run compares Araknis RX discard counters and CP4-R system
+and program start times against the preceding successful comparable result for
+the same target in this app session. A decreased counter can mean wrap/reset;
+no packet-loss rate or cause is inferred. Changed start times mean a possible
+restart or clock adjustment. Unread metrics are not carried into current results.
+Reports and comparison baselines remain in memory and clear on app restart.
+Logs contain only timestamps and check counts, not raw reports or credentials.
+
+Duplicate clicks do not launch extra runs. Other device operations are blocked
+while the combined run is active. Combined WattBox checks read inventory only:
+they never create reboot confirmations or issue power commands. Scheduling and
+alerts are not included. Live combined-report verification remains pending.

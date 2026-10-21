@@ -1,3 +1,13 @@
+# 0.12.0
+
+- Add background Run All Checks with one combined JSON report for all eight existing checks.
+- Distinguish successful reads, findings to review, and unverified results without claiming full equipment health.
+- Compare switch RX discard counters and CP4-R reported system/program start times for the same target within an app session.
+- Continue after individual failures; block overlapping device operations during a combined run.
+- Keep WattBox inventory read-only, with no power confirmation or reboot from combined checks.
+- Prevent stale UniFi selections from silently reading a different controller/device.
+- Combined report compatibility requires live verification.
+
 # 0.11.0
 
 - Add read-only Control4 discovery using the existing Home Assistant integration.

@@ -29,5 +29,5 @@ def collect(entry_id='', token=None, entries_fn=entries, registries_fn=registrie
 
 
 def report_payload(result):
-    return {'format': 'adr-control4-discovery-v1', 'agent_version': '0.11.0',
+    return {'format': 'adr-control4-discovery-v1', 'agent_version': '0.12.0',
         'read_only': True, 'source': 'existing_home_assistant_integration', 'snapshot': result}

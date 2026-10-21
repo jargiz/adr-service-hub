@@ -1,5 +1,6 @@
 """Ingress-only ADR pilot. No HA config mounts or Supervisor API access."""
 import html
+import hashlib
 import json
 import os
 import secrets
@@ -9,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from service_report import run_checks, SkipCheck
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
@@ -131,6 +133,11 @@ class Pilot:
             self.ruckus_selection = json.loads((self.data / 'ruckus_selection.json').read_text())['entry_id']
         except (OSError, ValueError, KeyError):
             pass
+        self.service_report = None
+        self.service_running = False
+        self.service_progress = ''
+        self.service_baselines = {}
+        self.service_error = None
         self.active = False
         self.last_attempt = 0
         self.cooldown_error = False
@@ -143,6 +150,80 @@ class Pilot:
                     raise ValueError()
             except (ValueError, KeyError, OSError, TypeError):
                 self.cooldown_error = True
+
+    def service_jobs(self):
+        def selected(read, selection):
+            if not selection:
+                raise SkipCheck('Select this integration using its individual check first.')
+            return read(selection)
+
+        def console(config_fn, options, keyfile, read):
+            if not (self.data / keyfile).exists():
+                raise SkipCheck('Configure this system and approve its SSH identity using its individual check first.')
+            return read(config_fn(options), self.data / keyfile)
+
+        def wattbox():
+            if self.config is None or not (self.data / 'known_hosts').exists():
+                raise SkipCheck('Configure WattBox and approve its SSH identity using its individual check first.')
+            # Inventory only. Never call check(), create a confirmation, or reboot.
+            with self.box() as box:
+                return box.inventory()
+
+        def target_id(prefix, keyfile):
+            pin = (self.data / keyfile).read_text() if (self.data / keyfile).exists() else ''
+            identity = [self.araknis_options.get(prefix + '_host', ''),
+                self.araknis_options.get(prefix + '_ssh_port', 22), pin]
+            return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+
+        return [
+            ('WattBox', 'inventory', wattbox),
+            ('Sonos', 'ha-sonos', collect_sonos),
+            ('Ruckus', self.ruckus_selection, lambda: selected(collect_ruckus, self.ruckus_selection)),
+            ('UniFi', json.dumps(self.unifi_selection, sort_keys=True),
+                lambda: collect_unifi(self.unifi_selection.get('entry_id', ''), self.unifi_selection.get('device_id', ''))),
+            ('Crestron', self.crestron_selection, lambda: collect_crestron(self.crestron_selection)),
+            ('Control4', self.control4_selection, lambda: collect_control4(self.control4_selection)),
+            ('Araknis', target_id('araknis', 'araknis_known_hosts'),
+                lambda: console(araknis_settings, self.araknis_options, 'araknis_known_hosts', discover_araknis)),
+            ('CP4-R', target_id('cp4', 'cp4_known_hosts'),
+                lambda: console(cp4_settings, self.cp4_options, 'cp4_known_hosts', collect_cp4)),
+        ]
+
+    def start_service_checks(self):
+        if self.service_running:
+            return
+        if any((self.araknis_running, self.cp4_running, self.crestron_running,
+                self.control4_running, self.active)):
+            raise ProtocolError('Wait for the current check or power action to finish before running all checks.')
+        jobs = self.service_jobs()
+        self.service_report = None
+        self.service_error = None
+        self.service_progress = 'Starting'
+        self.service_running = True
+        def progress(name):
+            with self.lock:
+                self.service_progress = 'Checking ' + name
+        def run():
+            try:
+                report, baselines = run_checks(jobs, self.service_baselines, progress,
+                    tuple(self.araknis_options.get(k, '') for k in
+                        ('password', 'araknis_password', 'cp4_password')))
+                with self.lock:
+                    self.service_report = report
+                    self.service_baselines = baselines
+                    self.audit('service_report_read', str(len(report['checks'])) + ' checks')
+            except Exception:
+                with self.lock:
+                    self.service_error = 'Combined report could not finish. Run again on demand; no automatic retry was made.'
+            finally:
+                with self.lock:
+                    self.service_running = False
+                    self.service_progress = ''
+        try:
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self.service_running = False
+            raise
 
     def ready(self):
         if self.config is None:
@@ -477,8 +558,27 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.11.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.12.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
+    text += '<section><h2>Combined service report</h2><p>Run the existing read-only checks once. No outlet reboots or device configuration changes are included. Allow several minutes, then refresh.</p>'
+    text += form('service-check', 'Run All Checks') + form('refresh', 'Refresh service report')
+    if pilot.service_running:
+        text += '<p>' + esc(pilot.service_progress) + '</p>'
+    if pilot.service_error:
+        text += '<p>' + esc(pilot.service_error) + '</p>'
+    if pilot.service_report:
+        report = pilot.service_report
+        text += form('service-report', 'Download combined report')
+        text += '<p>Completed: ' + esc(report['completed_at']) + '. Verified means the read succeeded, not that every function is healthy.</p>'
+        text += '<p>' + esc(report['counts']['verified']) + ' verified reads · ' + esc(report['counts']['review']) + ' to review · ' + esc(report['counts']['unverified']) + ' unverified.</p>'
+        text += '<table><tr><th>System</th><th>Result</th><th>Findings and comparisons</th></tr>'
+        for check in report['checks']:
+            text += '<tr><td>' + esc(check['system']) + '</td><td>' + esc(check['status']) + '</td><td>'
+            for finding in check['findings'] + check['comparisons']:
+                text += '<p>' + esc(finding) + '</p>'
+            text += '</td></tr>'
+        text += '</table><p>Comparisons use the same target during this app session. Restarting the app clears baselines. Individual check results below are separate snapshots.</p>'
+    text += '</section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
     if pilot.araknis_candidate:
@@ -793,6 +893,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_service_report(self):
+        pilot = self.server.pilot
+        if pilot.service_running or not pilot.service_report:
+            raise ProtocolError('Complete Run All Checks before downloading its report.')
+        body = json.dumps(pilot.service_report, indent=2, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Disposition', 'attachment; filename="ADR-Service-Report.json"')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_araknis_report(self):
         pilot = self.server.pilot
         if pilot.araknis_running or not pilot.araknis_diagnostics:
@@ -891,7 +1005,14 @@ class Handler(BaseHTTPRequestHandler):
         action = urlsplit(self.path).path.strip('/')
         with pilot.lock:
             try:
-                if action == 'identity':
+                if getattr(pilot, 'service_running', False) and action not in ('refresh', 'service-check', 'service-report'):
+                    raise ProtocolError('Combined checks are running. Refresh results or wait for completion before another action.')
+                if action == 'service-check':
+                    pilot.start_service_checks()
+                    self.send_page()
+                elif action == 'service-report':
+                    self.send_service_report()
+                elif action == 'identity':
                     self.send_page(candidate=pilot.key_candidate())
                 elif action == 'trust':
                     pilot.trust(params.get('nonce', [''])[0])
@@ -969,7 +1090,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.11.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.12.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

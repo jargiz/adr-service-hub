@@ -148,8 +148,8 @@ def compare(current, previous):
     return changes or ['No changes detected in comparable metrics.' if current else 'No comparable discard or processor start-time metrics exposed.']
 
 
-def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=()):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.15.0', 'read_only': True,
+def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=(), completed=lambda *_: None):
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.15.1', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',
@@ -189,6 +189,7 @@ def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=()
             check['findings'] = ['Read failed. Check this system individually for connection, selection or identity setup. No retry was made.']
         check['completed_at'] = now()
         report['checks'].append(check)
+        completed(name, check['status'])
     report['completed_at'] = now()
     report['counts'] = {status: sum(c['status'] == status for c in report['checks'])
         for status in ('verified', 'review', 'unverified')}

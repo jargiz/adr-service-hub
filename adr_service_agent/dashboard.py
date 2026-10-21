@@ -50,12 +50,12 @@ def key_readings(name, snapshot):
                 lines.append(str(sensor.get('name', 'Sensor')) + ': ' + str(sensor.get('state')) + (' ' + str(sensor['unit']) if sensor.get('unit') else ''))
     elif name == 'Ruckus':
         aps = [d for d in snapshot.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus']
-        lines.append(str(len(aps)) + ' Ruckus devices in HA registry; AP health unverified')
-        lines.append(str(len(snapshot.get('entities', []))) + ' HA readings')
+        lines.append(str(len(aps)) + ' registered Ruckus devices; AP health unverified')
+        lines.append(str(len(snapshot.get('entities', []))) + ' device readings')
     else:
         readings = snapshot.get('readings', snapshot.get('players', []))
         available = sum(r.get('state') not in ('unknown', 'unavailable', 'read failed') for r in readings)
-        lines.append(str(available) + '/' + str(len(readings)) + ' usable HA states')
+        lines.append(str(available) + '/' + str(len(readings)) + ' readings available')
         if name == 'Crestron':
             lights = [r for r in readings if r.get('entity_id', '').startswith('light.')]
             lines.append(str(sum(r.get('state') == 'on' for r in lights)) + '/' + str(len(lights)) + ' lights reported on')

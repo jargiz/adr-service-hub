@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from service_report import run_checks, SkipCheck
+from presentation import present_html
 from dashboard import cards, grouped_cards, SYSTEMS, display_time
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
@@ -154,6 +155,8 @@ class Pilot:
         self.service_report = None
         self.service_running = False
         self.service_progress = ''
+        self.service_steps = {}
+        self.service_completed = 0
         self.service_baselines = {}
         self.service_error = None
         self.active = False
@@ -247,16 +250,25 @@ class Pilot:
         self.service_report = None
         self.service_error = None
         self.service_progress = 'Starting'
+        self.service_steps = {name: 'queued' for name, _, _ in jobs}
+        self.service_completed = 0
         self.service_running = True
         def progress(name):
             with self.lock:
                 self.service_progress = 'Checking ' + name
+                self.service_steps[name] = 'checking'
+        def completed(name, status):
+            with self.lock:
+                self.service_steps[name] = status
+                self.service_completed += 1
         def run():
             try:
                 report, baselines = run_checks(jobs, self.service_baselines, progress,
                     tuple(self.araknis_options.get(k, '') for k in
-                        ('password', 'araknis_password', 'cp4_password')), history=self.service_history)
+                        ('password', 'araknis_password', 'cp4_password')), history=self.service_history, completed=completed)
                 with self.lock:
+                    self.service_steps = {check['system']: check['status'] for check in report['checks']}
+                    self.service_completed = len(report['checks'])
                     self.service_report = report
                     self.service_baselines = baselines
                     self.audit('service_report_read', str(len(report['checks'])) + ' checks')
@@ -663,13 +675,48 @@ section{background:var(--card);border:1px solid var(--line);border-radius:12px;p
 CSS += (Path(__file__).resolve().parent / 'dashboard.css').read_text()
 
 
+
+def service_progress_panel(pilot):
+    esc = lambda value: html.escape(str(value), quote=True)
+    if not pilot.service_running and not pilot.service_report and not pilot.service_error:
+        return ''
+    steps = getattr(pilot, 'service_steps', {})
+    report = pilot.service_report
+    if report and not pilot.service_running:
+        steps = {item['system']: item['status'] for item in report['checks']}
+    total = len(steps) or len(SYSTEMS)
+    done = sum(state not in ('queued', 'checking') for state in steps.values())
+    if pilot.service_running:
+        title = pilot.service_progress or 'Starting checks'
+        detail = str(done) + ' of ' + str(total) + ' checks finished · This page updates automatically'
+    elif pilot.service_error:
+        title = 'Checks stopped before completion'
+        detail = str(done) + ' of ' + str(total) + ' checks finished · No automatic retry'
+    else:
+        title = 'Check complete'
+        detail = str(done) + ' of ' + str(total) + ' checks finished · Report updated'
+    output = '<section class="check-progress" role="status" aria-live="polite"><div class="progress-heading"><h3>' + esc(title) + '</h3><span>' + str(int(done / total * 100)) + '%</span></div><p>' + esc(detail) + '</p>'
+    output += '<progress max="' + str(total) + '" value="' + str(done) + '" aria-label="Completed system checks">' + str(done) + ' of ' + str(total) + '</progress>'
+    labels = {'queued': 'Queued', 'checking': 'Checking…', 'verified': 'Read completed', 'review': 'Review findings', 'unverified': 'Unverified'}
+    output += '<ol class="check-steps">'
+    for name, status in steps.items():
+        style = status if status in labels else 'unverified'
+        output += '<li class="step-' + style + '"><strong>' + esc(name) + '</strong><span>' + esc(labels.get(status, 'Unverified')) + '</span></li>'
+    output += '</ol>'
+    if pilot.service_running:
+        output += '<small>Each system is one step; the bar is not a time estimate. Some checks take longer than others.</small>'
+    return output + '</section>'
+
+
 def page(pilot, confirmation=None, candidate=None, error=None):
     esc = lambda value: html.escape(str(value), quote=True)
-    def form(action, label, extra="", danger=False):
+    def form(action, label, extra="", danger=False, disabled=False):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
-            + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
+            + extra + f'<button class="{"danger" if danger else ""}"{" disabled" if disabled else ""}>{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.15.0</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">On-demand checks</span></header>'
+    if pilot.service_running:
+        text += '<meta http-equiv="refresh" content="3;url=./">'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.15.1</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">On-demand checks</span></header>'
     report = pilot.service_report
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready for an on-demand check.'):
@@ -678,10 +725,11 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         notice = pilot.service_progress or 'Service check in progress.'
     text += '<section class="notice" role="status"><p>' + esc(notice) + '</p></section>'
     text += '<section class="overview"><div class="overview-heading"><div><h2>System snapshot</h2><p class="subtitle">Run a read-only check to update your service report.</p></div></div><div class="toolbar">'
-    text += form('service-check', 'Run All Checks') + '<span class="secondary">' + form('refresh', 'Refresh') + '</span>'
+    text += form('service-check', 'Checks running…' if pilot.service_running else 'Run All Checks', disabled=pilot.service_running) + '<span class="secondary">' + form('refresh', 'Refresh') + '</span>'
     if report:
         text += '<span class="secondary">' + form('service-report', 'Download report') + '</span>'
     text += '</div>'
+    text += service_progress_panel(pilot)
     if pilot.service_error:
         text += '<p>' + esc(pilot.service_error) + '</p>'
     if report:
@@ -690,7 +738,8 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for count, label, style in [(counts['verified'], 'Verified reads', 'good'), (counts['review'], 'To review', 'attention'), (counts['unverified'], 'Unverified', '')]:
             text += '<div class="summary-tile ' + style + '"><span class="summary-number">' + esc(count) + '</span><span class="summary-label">' + label + '</span></div>'
         text += '</div><p class="report-caption">Completed ' + esc(display_time(report.get('completed_at'))) + ' · Verified means the read succeeded; full equipment health remains unverified.</p>'
-    text += grouped_cards(report)
+    if not pilot.service_running:
+        text += grouped_cards(report)
     text += '<p class="report-caption">On-demand snapshot. Comparisons clear on app restart. Read-only checks do not reboot outlets or change device configuration.</p></section>'
     text += '<details class="history-editor" id="history"><summary>Add historical observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
     history_fields = '<label>System <select name="system" required>' + ''.join('<option>' + esc(name) + '</option>' for name in SYSTEMS) + '</select></label><label>Subject (port or device) <input name="subject" maxlength="80" required></label><label>Observation <textarea name="note" maxlength="600" required></textarea></label>'
@@ -784,7 +833,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for note in pilot.cp4['not_attempted']:
             text += '<p>' + esc(note) + '</p>'
     text += '<p>Reads processor version and supported diagnostic commands. IP-table and main Cresnet results cover those device lists, not the full Home device-health inventory. Unsupported metrics remain unverified. No restart or configuration commands are implemented.</p></section>'
-    text += '<section><h2>Crestron discovery</h2><p>Inspect your existing Crestron integration in Home Assistant. No additional processor credentials are needed.</p>'
+    text += '<section><h2>Crestron discovery</h2><p>Inspect the existing Crestron system connection. No additional processor credentials are needed.</p>'
     extra = ''
     c_report = pilot.crestron
     if c_report and c_report['entries']:
@@ -829,7 +878,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
                 text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
         text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the processor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
     text += '</section>'
-    text += '<section><h2>Control4 discovery</h2><p>Inspect your existing Control4 integration in Home Assistant. No additional processor credentials are needed.</p>'
+    text += '<section><h2>Control4 discovery</h2><p>Inspect the existing Control4 system connection. No additional processor credentials are needed.</p>'
     extra = ''
     c_report = pilot.control4
     if c_report and c_report['entries']:
@@ -874,7 +923,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
                 text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
         text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the processor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
     text += '</section>'
-    text += '<section><h2>Sense discovery</h2><p>Inspect your existing Sense integration in Home Assistant. Read voltage, power and energy sensors without adding Sense credentials to this app. This is an on-demand discovery, not continuous monitoring.</p>'
+    text += '<section><h2>Sense discovery</h2><p>Inspect the existing Sense system connection. Read voltage, power and energy sensors without adding Sense credentials to this app. Read current measurements and available energy history.</p>'
     extra = ''
     c_report = pilot.sense
     text += form('sense-discover', 'Discover Sense readings', extra)
@@ -912,7 +961,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
                 text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
         text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the monitor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
     text += '</section>'
-    text += '<section><h2>Bluesound discovery</h2><p>Inspect your existing Bluesound integration in Home Assistant. All configured players are included. No additional player credentials are needed.</p>'
+    text += '<section><h2>Bluesound discovery</h2><p>Inspect the existing Bluesound system connection. All configured players are included. No additional player credentials are needed.</p>'
     extra = ''
     c_report = pilot.bluesound
     text += form('bluesound-discover', 'Discover Bluesound readings', extra)
@@ -950,7 +999,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
                 text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
         text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the player is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
     text += '</section>'
-    text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
+    text += '<section><h2>Sonos diagnostics</h2><p>Read playback and availability reported by your Sonos system.</p>'
     text += form('sonos', 'Check Sonos')
     if pilot.sonos_error:
         text += '<p>' + esc(pilot.sonos_error) + '</p>'
@@ -1006,7 +1055,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
                 text += '<p>No enabled diagnostic entities were found for this entry.</p>'
         text += '<p>Presence states (home/not_home) describe what the integration reports; they do not establish AP health, signal strength, internet performance, or the reason for a disconnection. No Ruckus settings were changed.</p>'
     text += '</section>'
-    text += '<section><h2>UniFi diagnostics</h2><p>Read enabled sensor states for a selected UniFi device through Home Assistant.</p>'
+    text += '<section><h2>UniFi diagnostics</h2><p>Read available diagnostic readings for the selected UniFi device.</p>'
     extra = ''
     u = pilot.unifi
     if u and u['entries']:
@@ -1055,7 +1104,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p>Values are reported by the Home Assistant UniFi integration, not fresh tests run by this app. WAN latency is not internet download speed. Last-update time is not a heartbeat. Araknis and Ruckus switches need their own connections for internal switch diagnostics.</p>'
     text += '</section>'
     if pilot.config is None:
-        return text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>'
+        return present_html(text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>')
     c = pilot.config
     text += f'<section><h2>{esc(c["device_alias"])}</h2><p>WattBox: <code>{esc(c["wattbox_host"])}:{c["ssh_port"]}</code><br>'
     text += f'Test outlet: <strong>{c["test_outlet"]}</strong> · Expected label: <strong>{esc(c["expected_outlet_label"])}</strong></p>'
@@ -1077,7 +1126,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
     text += '</details><p><small>On-demand local pilot. Phone voice access is not connected in this version.</small></p></main></html>'
-    return text
+    return present_html(text)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1198,7 +1247,7 @@ class Handler(BaseHTTPRequestHandler):
     def authorized(self):
         # Do not trust spoofable forwarded headers; enforce the actual peer.
         if self.client_address[0] != '172.30.32.2':
-            self.send_error(403, 'Home Assistant ingress required')
+            self.send_error(403, 'Authorized app access required')
             return False
         return True
 
@@ -1333,7 +1382,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.15.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.15.1 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

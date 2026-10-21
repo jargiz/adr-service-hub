@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.15.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.15.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -450,3 +450,18 @@ these stay explicitly unverified. Router client presence is not AP health.
 Dashboard timestamps use Eastern time with bundled timezone data; downloadable
 reports retain their original timestamps. Startup still performs no device checks.
 Existing connection settings, local notes and power safeguards are unchanged.
+
+
+## Run progress and automatic refresh (0.15.1)
+
+Run All Checks shows the current system, completed count, a progress bar and each
+system's status. Every finished read, including skipped/failed reads, advances
+one step. The percentage counts systems, not elapsed time or equipment health.
+During the combined run, the page automatically navigates to its read-only GET
+view every three seconds. It never resubmits the POST command, restarts checks
+or sends extra device commands. On completion or failure, automatic refresh
+stops and the final status/report appears. Duplicate Run All clicks remain
+blocked server-side and the button is disabled while running.
+
+Visible app copy uses plain system names and reading labels. Internal protocol
+identifiers and raw report schemas remain intact for diagnostics.

@@ -1,5 +1,5 @@
 name: ADR Service Agent
-version: "0.15.0"
+version: "0.15.1"
 slug: adr_service_agent
 description: "Read-only network, Sonos, Bluesound, Sense, Control4, Crestron and CP4-R diagnostics; single-outlet WattBox pilot."
 arch:

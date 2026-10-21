@@ -1,3 +1,14 @@
+# 0.15.1
+
+- Use plain system/reading labels throughout the app, including upstream messages
+  and fallback sensor names, without displaying internal platform terminology.
+
+- Show combined-run progress with the current system, completed count and per-system statuses.
+- Auto-refresh the read-only page every three seconds while checks run, then stop
+  refreshing once the completed report or failure status is displayed.
+- Disable Run All Checks while running; retain duplicate-run and power safeguards.
+- Refresh uses GET only, never replays the command POST or triggers extra checks.
+
 # 0.15.0
 
 - Match ADR Billing branding with the bundled ADR logo, red accents, white cards,

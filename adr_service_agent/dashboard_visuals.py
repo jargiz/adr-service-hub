@@ -74,7 +74,7 @@ def visuals(name, snapshot, lines):
             output += '<p class="empty-state">No recorded Sense history received yet.</p>'
         for item in series[:6]:
             output += history_chart(item)
-        output += '<small>HA recorder history · Missing samples remain gaps. Sampled voltage does not establish transient power quality.</small></div>'
+        output += '<small>Recorded history · Missing samples remain gaps. Sampled voltage does not establish transient power quality.</small></div>'
     return output
 
 
@@ -172,5 +172,5 @@ def network_panels(checks):
     if not aps:
         output += '<p class="empty-state">Run checks to discover registered access points.</p>'
     for ap in aps[:32]:
-        output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model', '')) + '</small><p>Status: <strong>Unverified</strong></p><p>Connected devices: <strong>Unverified</strong></p><small>The current Ruckus HA snapshot does not establish per-AP status or counts.</small></div>'
+        output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model', '')) + '</small><p>Status: <strong>Unverified</strong></p><p>Connected devices: <strong>Unverified</strong></p><small>The current Ruckus snapshot does not establish per-AP status or counts.</small></div>'
     return output + '</div></div>'

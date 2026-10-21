@@ -1,3 +1,17 @@
+# 0.17.0
+
+- Enable automatic local system monitoring every 20 minutes and speed tests every
+  six hours by default. Expose configurable intervals and independent test disable.
+- Persist attempt times, add startup delay, defer busy runs and avoid missed-run
+  queues or immediate failure retries. Manual runs reset the matching schedule.
+- Show next check/test times and approximate countdowns; refresh the idle dashboard
+  automatically without triggering device reads from page requests.
+- Default new installs to Start on boot; existing installations keep their app setting.
+- Validation: 180 automated tests pass, including restart timing, busy deferral,
+  opt-out, failure cadence, manual schedule resets and background operation.
+- Retain the latest completed report during refresh. Schedules never invoke power
+  commands or configure missing connections. Live house validation remains pending.
+
 # 0.16.0
 
 - Add a separate explicit Internet speed-test action using an enabled configured

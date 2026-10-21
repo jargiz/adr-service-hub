@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from service_report import run_checks, SkipCheck
+from monitoring import MonitoringSchedule
 from presentation import present_html
 from internet_test import run as run_internet_test, InternetTestError
 from ruckus_controller import settings as controller_settings, inspect_certificate, collect as collect_controller, ControllerError
@@ -102,7 +103,7 @@ class Pilot:
         self.csrf = secrets.token_urlsafe(32)
         self.confirmations = {}
         self.candidates = {}
-        self.result = "Ready for an on-demand check. No device commands have been sent by starting the app."
+        self.result = "Ready. Automatic monitoring begins after the startup delay when enabled."
         self.inventory = None
         self.internet_test = None
         self.internet_test_running = False
@@ -187,6 +188,43 @@ class Pilot:
             except (ValueError, KeyError, OSError, TypeError):
                 self.cooldown_error = True
 
+        self.monitor = MonitoringSchedule(self.araknis_options, self.data / 'monitoring_state.json')
+        self.monitor_stop = threading.Event()
+        self.monitor_thread = None
+        self.monitor_active = False
+
+    def monitoring_busy(self):
+        return any((self.service_running, self.internet_test_running, self.controller_running,
+            self.active, self.araknis_running, self.cp4_running, self.crestron_running,
+            self.control4_running, self.bluesound_running, self.sense_running)) or any(
+                time.monotonic() - item[0] <= 120 for item in self.confirmations.values())
+
+    def monitoring_tick(self):
+        def dispatch(kind):
+            if kind == 'service':
+                self.start_service_checks(scheduled=True)
+            else:
+                self.start_network_job('internet_test', scheduled=True)
+        with self.lock:
+            return self.monitor.tick(dispatch, busy=self.monitoring_busy())
+
+    def start_monitoring(self):
+        if not self.monitor.enabled or self.monitor_active:
+            return
+        self.monitor_active = True
+        def loop():
+            try:
+                while not self.monitor_stop.wait(5):
+                    self.monitoring_tick()
+            finally:
+                self.monitor_active = False
+        self.monitor_thread = threading.Thread(target=loop, daemon=True, name='adr-monitor')
+        try:
+            self.monitor_thread.start()
+        except Exception:
+            self.monitor_active = False
+            raise
+
     def service_jobs(self):
         def selected(read, selection):
             if not selection:
@@ -265,14 +303,15 @@ class Pilot:
         self.audit('service_history_added')
         self.result = 'Historical observation saved locally for this target. It does not suppress future findings.'
 
-    def start_service_checks(self):
+    def start_service_checks(self, scheduled=False):
         if self.service_running:
             return
         if any((self.araknis_running, self.cp4_running, self.crestron_running,
                 self.control4_running, self.bluesound_running, self.sense_running, self.controller_running, self.internet_test_running, self.active)):
             raise ProtocolError('Wait for the current check or power action to finish before running all checks.')
         jobs = self.service_jobs()
-        self.service_report = None
+        if not scheduled:
+            self.monitor.record_start('service')
         self.service_error = None
         self.service_progress = 'Starting'
         self.service_steps = {name: 'queued' for name, _, _ in jobs}
@@ -299,7 +338,7 @@ class Pilot:
                     self.audit('service_report_read', str(len(report['checks'])) + ' checks')
             except Exception:
                 with self.lock:
-                    self.service_error = 'Combined report could not finish. Run again on demand; no automatic retry was made.'
+                    self.service_error = 'Combined report could not finish. The previous report, if available, is retained. No immediate retry was made.'
             finally:
                 with self.lock:
                     self.service_running = False
@@ -330,7 +369,7 @@ class Pilot:
         self.audit('ruckus_controller_identity_approved')
         self.result = 'Ruckus controller certificate saved. You can now read access point statistics.'
 
-    def start_network_job(self, kind):
+    def start_network_job(self, kind, scheduled=False):
         if kind not in ('internet_test', 'controller'):
             raise ProtocolError('Unsupported network check.')
         if any((self.service_running, self.internet_test_running, self.controller_running, self.active, self.araknis_running, self.cp4_running, self.crestron_running, self.control4_running, self.bluesound_running, self.sense_running)):
@@ -339,6 +378,8 @@ class Pilot:
             config = controller_settings(self.araknis_options)
             if not self.controller_pin:
                 raise ProtocolError('Inspect and approve the controller certificate first.')
+        if kind == 'internet_test' and not scheduled:
+            self.monitor.record_start(kind)
         setattr(self, kind + '_running', True)
         setattr(self, kind + '_error', None)
         setattr(self, 'internet_test' if kind == 'internet_test' else 'controller_result', None)
@@ -758,7 +799,7 @@ def service_progress_panel(pilot):
         return ''
     steps = getattr(pilot, 'service_steps', {})
     report = pilot.service_report
-    if report and not pilot.service_running:
+    if report and not pilot.service_running and not pilot.service_error:
         steps = {item['system']: item['status'] for item in report['checks']}
     total = len(steps) or len(SYSTEMS)
     done = sum(state not in ('queued', 'checking') for state in steps.values())
@@ -784,6 +825,28 @@ def service_progress_panel(pilot):
     return output + '</section>'
 
 
+def monitoring_panel(pilot):
+    esc = lambda value: html.escape(str(value), quote=True)
+    monitor = pilot.monitor
+    if not monitor.enabled:
+        return '<section class="monitoring-panel"><h3>Automatic monitoring is off</h3><p>Run checks when needed, or enable automatic_monitoring in app Configuration.</p></section>'
+    output = '<section class="monitoring-panel" aria-label="Monitoring schedule"><h3>Automatic monitoring</h3><div class="monitoring-times">'
+    for kind, label in (('service', 'System checks'), ('internet_test', 'Internet speed test')):
+        if not monitor.active(kind):
+            output += '<div><strong>' + label + '</strong><p>Automatic tests are off</p></div>'
+            continue
+        minutes = monitor.intervals[kind] // 60
+        period = str(minutes // 60) + ' hours' if minutes % 60 == 0 else str(minutes) + ' minutes'
+        running = pilot.service_running if kind == 'service' else pilot.internet_test_running
+        remaining = max(0, int(monitor.next_due[kind] - monitor.clock()))
+        due = 'Running now' if running else 'Waiting for the current operation' if remaining == 0 and pilot.monitoring_busy() else 'Due shortly' if remaining == 0 else 'Next: ' + display_time(monitor.next_time(kind)) + ' · in ' + str((remaining + 59) // 60) + ' min'
+        output += '<div><strong>' + label + '</strong><p>Every ' + period + '</p><small>' + esc(due) + '</small></div>'
+    output += '</div><p class="report-caption">Runs locally while the app is running, even when this dashboard is closed. Scheduled checks never reboot equipment. Speed tests require a configured test connection.</p>'
+    if monitor.error: output += '<p>' + esc(monitor.error) + '</p>'
+    if monitor.persistence_error: output += '<p>' + esc(monitor.persistence_error) + '</p>'
+    return output + '</section>'
+
+
 def page(pilot, confirmation=None, candidate=None, error=None):
     esc = lambda value: html.escape(str(value), quote=True)
     def form(action, label, extra="", danger=False, disabled=False):
@@ -792,19 +855,22 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
     if pilot.service_running or pilot.internet_test_running or pilot.controller_running:
         text += '<meta http-equiv="refresh" content="3;url=./">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.16.0</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">On-demand checks</span></header>'
+    elif pilot.monitor_active and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
+        text += '<meta http-equiv="refresh" content="60;url=./">'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.17.0</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">{"Automatic monitoring" if pilot.monitor.enabled else "Manual checks"}</span></header>'
     report = pilot.service_report
     notice = error or pilot.result
-    if report and not error and pilot.result.startswith('Ready for an on-demand check.'):
+    if report and not error and pilot.result.startswith('Ready.'):
         notice = 'Last check completed · ' + display_time(report.get('completed_at'))
     if pilot.service_running and not error:
         notice = pilot.service_progress or 'Service check in progress.'
     text += '<section class="notice" role="status"><p>' + esc(notice) + '</p></section>'
-    text += '<section class="overview"><div class="overview-heading"><div><h2>System snapshot</h2><p class="subtitle">Run a read-only check to update your service report.</p></div></div><div class="toolbar">'
+    text += '<section class="overview"><div class="overview-heading"><div><h2>System snapshot</h2><p class="subtitle">Latest system readings. Automatic monitoring refreshes the report on schedule.</p></div></div><div class="toolbar">'
     text += form('service-check', 'Checks running…' if pilot.service_running else 'Run All Checks', disabled=pilot.service_running) + '<span class="secondary">' + form('refresh', 'Refresh') + '</span>'
     if report:
         text += '<span class="secondary">' + form('service-report', 'Download report') + '</span>'
     text += '</div>'
+    text += monitoring_panel(pilot)
     text += service_progress_panel(pilot)
     text += '<details class="network-actions"' + (' open' if pilot.internet_test_running or pilot.internet_test or pilot.internet_test_error or pilot.controller_running or pilot.controller_result or pilot.controller_error else '') + '><summary>Internet speed test and access point checks</summary><p>A speed test measures download/upload performance from this service host and can temporarily use your connection capacity.</p>'
     text += form('internet-speedtest', 'Run Internet Speed Test', disabled=pilot.service_running or pilot.internet_test_running or pilot.controller_running)
@@ -816,7 +882,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for reading in pilot.internet_test['readings']:
             text += '<p>' + esc(reading['name']) + ': ' + esc(reading['state']) + ' ' + esc(reading.get('unit') or '') + '</p>'
         for note in pilot.internet_test.get('limitations', []): text += '<p>' + esc(note) + '</p>'
-        text += '<p>Run All Checks to refresh the combined report with the stored speed-test readings.</p>'
+        text += '<p>The next system check includes the stored speed-test readings. Run All Checks to update the report sooner.</p>'
     text += form('controller-read', 'Read Access Points', disabled=pilot.service_running or pilot.controller_running or pilot.internet_test_running)
     if pilot.controller_running: text += '<p role="status">Reading access points from the Ruckus controller. Results will update automatically.</p>'
     if pilot.controller_error: text += '<p>' + esc(pilot.controller_error) + '</p>'
@@ -835,9 +901,9 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for count, label, style in [(counts['verified'], 'Verified reads', 'good'), (counts['review'], 'To review', 'attention'), (counts['unverified'], 'Unverified', '')]:
             text += '<div class="summary-tile ' + style + '"><span class="summary-number">' + esc(count) + '</span><span class="summary-label">' + label + '</span></div>'
         text += '</div><p class="report-caption">Completed ' + esc(display_time(report.get('completed_at'))) + ' · Verified means the read succeeded; full equipment health remains unverified.</p>'
-    if not pilot.service_running:
+    if report or not pilot.service_running:
         text += grouped_cards(report)
-    text += '<p class="report-caption">On-demand snapshot. Comparisons clear on app restart. Read-only checks do not reboot outlets or change device configuration.</p></section>'
+    text += '<p class="report-caption">Latest collected snapshot. Comparisons clear on app restart. Read-only checks do not reboot outlets or change device configuration.</p></section>'
     text += '<details class="history-editor" id="history"><summary>Add historical observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
     history_fields = '<label>System <select name="system" required>' + ''.join('<option>' + esc(name) + '</option>' for name in SYSTEMS) + '</select></label><label>Subject (port or device) <input name="subject" maxlength="80" required></label><label>Observation <textarea name="note" maxlength="600" required></textarea></label>'
     text += form('service-history', 'Save historical observation', history_fields)
@@ -1229,7 +1295,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<section><h2>Test reboot</h2><p>Confirm that this outlet powers only the named test device.</p>'
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
-    text += '</details><p><small>On-demand local pilot. Phone voice access is not connected in this version.</small></p></main></html>'
+    text += '</details><p><small>Local service monitor. Phone voice access is not connected in this version.</small></p></main></html>'
     return present_html(text)
 
 
@@ -1500,8 +1566,13 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.16.0 ready for Home Assistant ingress. No startup device actions.')
-    server.serve_forever()
+    server.pilot.start_monitoring()
+    print('ADR Service Agent 0.17.0 ready. Local monitoring uses configured intervals; no automatic power actions.')
+    try:
+        server.serve_forever()
+    finally:
+        server.pilot.monitor_stop.set()
+        server.server_close()
 
 
 if __name__ == '__main__':

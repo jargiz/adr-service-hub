@@ -1,12 +1,12 @@
 name: ADR Service Agent
-version: "0.16.0"
+version: "0.17.0"
 slug: adr_service_agent
-description: "Read-only network, Sonos, Bluesound, Sense, Control4, Crestron and CP4-R diagnostics; single-outlet WattBox pilot."
+description: "Automatic monitoring and Internet speed tests; read-only network, Sonos, Bluesound, Sense, Control4, Crestron and CP4-R diagnostics; single-outlet WattBox pilot."
 arch:
   - aarch64
   - amd64
 startup: application
-boot: manual
+boot: auto
 stage: experimental
 init: true
 ingress: true
@@ -18,6 +18,10 @@ homeassistant_api: true
 hassio_api: false
 host_network: false
 options:
+  automatic_monitoring: true
+  monitor_interval_minutes: 20
+  automatic_speedtests: true
+  speedtest_interval_minutes: 360
   wattbox_host: ""
   ssh_port: 22
   username: ""
@@ -39,6 +43,10 @@ options:
   ruckus_controller_username: ""
   ruckus_controller_password: ""
 schema:
+  automatic_monitoring: bool?
+  monitor_interval_minutes: int(5,1440)?
+  automatic_speedtests: bool?
+  speedtest_interval_minutes: int(60,10080)?
   wattbox_host: str
   ssh_port: port
   username: str

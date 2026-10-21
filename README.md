@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.16.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.17.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -494,3 +494,39 @@ missing counts remain unknown. No live-controller compatibility claim is made.
 Sense now prioritizes main-monitor voltage, power and daily energy before appliance
 readings and history. A large difference between two reported line voltages is
 flagged for source verification, not classified as proof of an electrical fault.
+
+
+## Automatic local monitoring (0.17.0)
+
+Monitoring is enabled by default, including upgrades with the new options absent.
+System reports run every 20 minutes and Internet speed tests every 360 minutes
+(6 hours). The first due operation waits at least 60 seconds after app startup.
+It runs on the app host, even with the dashboard closed; no ChatGPT task is required.
+The app must remain running. New installs default to Start on boot. On an existing installation, check that
+Start on boot is enabled in app settings if monitoring should resume after a host reboot.
+
+Options in app Configuration:
+- automatic_monitoring: true (false disables all automatic jobs)
+- monitor_interval_minutes: 20 (5–1440)
+- automatic_speedtests: true (false keeps system monitoring but disables scheduled tests)
+- speedtest_interval_minutes: 360 (60–10080)
+
+Save options and restart only the ADR app to change intervals. Configured connection
+and approved device identities remain required. Scheduling does not configure missing
+Speedtest or Ruckus connections, approve certificates, or enable disabled sensors.
+Disable Speedtest.net's own polling to avoid a separate upstream hourly schedule.
+
+The scheduler serializes with manual operations, defers while checks/power operations
+or a live power-confirmation review are pending, and runs a due speed test before a
+due system report. Missed runs are not queued. A failed attempt waits until its normal
+next interval; no immediate retry is sent. Manual runs reset the matching next due
+time. Attempt times persist privately across app restarts, preventing restart bursts.
+A corrupt schedule file delays the first runs by a full interval. Previous completed
+reports stay visible while a refresh runs, with original collection timestamps.
+The page refreshes by GET every 60 seconds while idle and monitoring, every three
+seconds during an active check, and avoids idle refresh during power confirmation.
+The schedule panel shows intervals, next times, approximate minutes remaining, and
+running/deferred states. Opening or refreshing the page never triggers a check.
+
+Automatic jobs only invoke the existing read-only report and the explicit bandwidth
+measurement service. No schedule can invoke WattBox resets or configuration changes.

@@ -1,3 +1,11 @@
+# 0.11.0
+
+- Add read-only Control4 discovery using the existing Home Assistant integration.
+- Reuse bounded, selected-entry HA inventory/state reads without controller credentials.
+- Add separate Control4 selection, background check and JSON report download.
+- Keep resource/Zigbee/full connectivity health explicitly unverified.
+- Live compatibility with the pilot's CORE 1 integration remains pending.
+
 # 0.10.1
 
 - Use the Home processor's bare IP-table query and classify console rejections correctly.

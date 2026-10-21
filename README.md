@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.10.1 is a local Home Assistant app for a single WattBox test device,
+Version 0.11.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -302,3 +302,31 @@ The output now distinguishes hardware, control-engine and Home setup-program
 versions. The pilot verified CP4-R HW2, control-engine 2.8000.00057 and Home
 setup program 4.012.0168. Do not confuse those version namespaces or infer update
 availability. New display queries still need live validation.
+
+## Control4 discovery (0.11.0)
+
+Configure the official Control4 integration in HA first. Select **Discover
+Control4 readings**, wait for the background check, refresh, and download the
+Control4 JSON report. No customer account credentials are copied into this app.
+A single configured entry is selected automatically; multiple entries require
+selection. Selection is saved separately from Crestron and other connectors.
+
+The shared HA reader inventories only devices/entities associated with the
+selected control4 entry and platform. Failed/disabled entries do not supply
+retained states as current readings. Disabled entities/devices are inventoried
+without queries. Supported enabled sensor, binary_sensor, light, cover, climate,
+lock, media_player and switch states are GET-only snapshots. Scenes/buttons are
+inventory only. Limits remain 128 readings (diagnostic sensors first), eight
+workers, 512 devices and 1024 inventory entities, with explicit truncation.
+
+No controller commands, scenes, device services, account changes, reloads or
+config writes are implemented. This does not establish CORE CPU, RAM, uptime,
+Zigbee health or full device connectivity. Those require independently verified
+diagnostic interfaces. Registry software version is metadata, not a fresh
+firmware query. Last-update time is not a heartbeat, and off is not offline.
+The report retains only allowlisted state attributes, excludes credentials and
+config-entry data/options, and requires ingress plus CSRF to download. Snapshots
+remain in memory; logs include only reading counts. Live Control4 discovery and
+report compatibility remain pending.
+
+Reference: https://www.home-assistant.io/integrations/control4/

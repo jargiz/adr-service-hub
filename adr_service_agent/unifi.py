@@ -85,3 +85,48 @@ def collect(entry_id='', device_id='', token=None, entries_fn=entries,
         raise
     except Exception:
         raise UniFiError('Could not read UniFi diagnostics through Home Assistant. No network or device commands were sent.') from None
+
+
+def speedtest_readings(token, get_fn=None, registries_fn=registries, read_fn=None):
+    """Read existing Speedtest integration states; never trigger a bandwidth test."""
+    from crestron import get_json, read_state as sensor_state
+    get_fn = get_fn or get_json
+    read_fn = read_fn or sensor_state
+    available = get_fn(token, 'config/config_entries/entry')
+    if not isinstance(available, list):
+        raise UniFiError('Unexpected integration inventory.')
+    entry_ids = {item['entry_id'] for item in available if isinstance(item, dict)
+        and item.get('domain') == 'speedtestdotnet' and item.get('state') == 'loaded'
+        and not item.get('disabled_by') and isinstance(item.get('entry_id'), str)}
+    if not entry_ids:
+        return []
+    registry, devices = registries_fn(token)
+    blocked = {d['id'] for d in devices if d.get('disabled_by')}
+    candidates = [e for e in registry if e.get('config_entry_id') in entry_ids
+        and e.get('platform') == 'speedtestdotnet' and not e.get('disabled_by')
+        and e.get('device_id') not in blocked
+        and re.fullmatch(r'sensor\.[a-z0-9_]+', str(e.get('entity_id', '')))]
+    output = []
+    for entity in sorted(candidates, key=lambda e: e['entity_id'])[:12]:
+        try:
+            state = read_fn(token, entity['entity_id'])
+            output.append({'entity_id': entity['entity_id'], 'name': 'Speedtest ' + str(state.get('name', entity['entity_id'])),
+                'state': state.get('state', 'unknown'), 'unit': state.get('attributes', {}).get('unit_of_measurement'),
+                'last_updated': state.get('last_updated')})
+        except Exception:
+            output.append({'entity_id': entity['entity_id'], 'name': entity['entity_id'], 'state': 'read failed', 'unit': None, 'last_updated': None})
+    return output
+
+
+def collect_dashboard(entry_id='', device_id='', token=None):
+    token = token if token is not None else token_value()
+    result = collect(entry_id, device_id, token=token)
+    result['internet_readings'] = []
+    result['limitations'] = ['ISP plan speed is not configured. Only existing gateway/Speedtest HA readings are displayed; no speed tests are triggered.']
+    try:
+        result['internet_readings'] = speedtest_readings(token)
+    except Exception:
+        result['limitations'].append('Existing Speedtest HA readings could not be inspected; gateway readings remain separate.')
+    if not result['internet_readings']:
+        result['limitations'].append('No enabled Speedtest readings received. ISP download/upload test results remain unverified.')
+    return result

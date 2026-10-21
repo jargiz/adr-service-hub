@@ -1,3 +1,22 @@
+# 0.15.0
+
+- Match ADR Billing branding with the bundled ADR logo, red accents, white cards,
+  light gray background and black system headings.
+- Group the dashboard into Power, Network and AV & Automation with accessible
+  category selectors, compact gauges and outlet-power indicators.
+- Add Sense to Run All Checks and individual discovery/JSON downloads using
+  configured Home Assistant integrations only. Read exposed voltage, power,
+  energy and measurement metadata without storing Sense credentials.
+- Read up to six Sense sensor histories for the past 24 hours from the existing
+  Home Assistant recorder. Show source names/units, gaps and missing history;
+  bound requests to 1 MB and 2000 states per series. No polling/recorder changes.
+- Display gateway latency and existing enabled Speedtest integration readings;
+  never trigger a bandwidth test or enable sensors. Show registered Ruckus APs
+  individually with per-AP status/client counts explicitly unverified.
+- Format dashboard times in Eastern time; preserve raw report timestamps.
+- Preserve ingress, CSRF, SSH pinning and confirmed single-outlet power safeguards.
+- Simulated suite: 148 tests. Live 0.15 dashboard/Sense compatibility pending.
+
 # 0.14.0
 
 - Add responsive summary cards for all nine systems, with key readings and expandable findings.

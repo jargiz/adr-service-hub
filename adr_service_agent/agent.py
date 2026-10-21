@@ -11,12 +11,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from service_report import run_checks, SkipCheck
-from dashboard import cards, SYSTEMS
+from dashboard import cards, grouped_cards, SYSTEMS, display_time
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
-from unifi import collect as collect_unifi, UniFiError
+from unifi import collect_dashboard as collect_unifi, UniFiError
 from crestron import collect as collect_crestron, report_payload as crestron_report_payload, CrestronError
+from sense import collect_with_history as collect_sense, report_payload as sense_report_payload, SenseError
 from bluesound import collect as collect_bluesound, report_payload as bluesound_report_payload, BluesoundError
 from control4 import collect as collect_control4, report_payload as control4_report_payload, Control4Error
 from cp4 import collect as collect_cp4, settings as cp4_settings, report_payload as cp4_report_payload, CP4Error
@@ -114,6 +115,9 @@ class Pilot:
             self.crestron_selection = json.loads((self.data / 'crestron_selection.json').read_text()).get('entry_id', '')
         except (OSError, ValueError, AttributeError):
             pass
+        self.sense = None
+        self.sense_error = None
+        self.sense_running = False
         self.bluesound = None
         self.bluesound_error = None
         self.bluesound_running = False
@@ -202,6 +206,7 @@ class Pilot:
                 lambda: console(araknis_settings, self.araknis_options, 'araknis_known_hosts', discover_araknis)),
             ('CP4-R', target_id('cp4', 'cp4_known_hosts'),
                 lambda: console(cp4_settings, self.cp4_options, 'cp4_known_hosts', collect_cp4)),
+            ('Sense', 'ha-sense', collect_sense),
         ]
 
     def add_service_history(self, system, subject, note):
@@ -236,7 +241,7 @@ class Pilot:
         if self.service_running:
             return
         if any((self.araknis_running, self.cp4_running, self.crestron_running,
-                self.control4_running, self.bluesound_running, self.active)):
+                self.control4_running, self.bluesound_running, self.sense_running, self.active)):
             raise ProtocolError('Wait for the current check or power action to finish before running all checks.')
         jobs = self.service_jobs()
         self.service_report = None
@@ -473,6 +478,32 @@ class Pilot:
             self.bluesound_running = False
             raise
 
+    def start_sense_discovery(self):
+        if self.sense_running:
+            return
+        self.sense = None
+        self.sense_error = None
+        self.sense_running = True
+        def run():
+            result, error = None, None
+            try:
+                result = collect_sense()
+            except SenseError as exc:
+                error = str(exc)
+            except Exception:
+                error = 'Sense discovery failed. No device actions or configuration changes were requested.'
+            with self.lock:
+                self.sense = result
+                self.sense_error = error
+                self.sense_running = False
+                if result:
+                    self.audit('sense_status_read', str(len(result['readings'])) + ' reading(s)')
+        try:
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self.sense_running = False
+            raise
+
     def check_unifi(self, entry_id='', device_id=''):
         self.unifi = None
         self.unifi_error = None
@@ -614,13 +645,22 @@ class Pilot:
             self.active = False
 
 
-CSS = """body{font:16px system-ui;background:#f3f5f7;color:#182635;margin:0;padding:24px}
-main{max-width:1200px;margin:auto}section{background:white;border:1px solid #dbe1e7;border-radius:12px;padding:20px;margin:18px 0}
-h1{margin-bottom:4px}p{line-height:1.55}button{font:inherit;background:#164d77;color:white;padding:12px 18px;border:0;border-radius:7px;cursor:pointer}
-.danger{background:#a52e27}form{display:inline-block;margin:6px 8px 6px 0}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:9px;border-bottom:1px solid #ddd}
-code{overflow-wrap:anywhere}small{color:#536574}.notice{border-left:4px solid #164d77}label{display:block;margin:12px 0}
-.system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:20px 0}.system-card{border:1px solid #dbe1e7;border-radius:10px;padding:18px;min-width:0;background:#fafcfd}.system-card h3{margin:0 0 10px}.badge{display:inline-block;background:#e7edf2;border-radius:20px;padding:5px 10px;font-size:13px}.verified .badge{background:#e0f0eb;color:#165946}.review .badge{background:#fae5de;color:#81371e}.observation .badge{background:#fbefcf;color:#6c5313}.metric{margin:8px 0;overflow-wrap:anywhere}.system-card details{margin-top:14px}.system-card p{overflow-wrap:anywhere}summary{cursor:pointer;font-weight:600}.history-note{margin-top:16px;padding:12px;border-left:3px solid #7b8198;background:#f1f0f6}.history-editor,.individual-checks{margin:20px 0;padding:18px;background:white;border:1px solid #dbe1e7;border-radius:12px}input,textarea,select{font:inherit;max-width:100%;box-sizing:border-box;padding:8px}textarea{display:block;width:100%;min-height:90px}.history-editor form{display:block}@media(max-width:600px){body{padding:12px}section{padding:14px}.system-grid{grid-template-columns:1fr}td,th{padding:6px;font-size:14px}}
+LOGO_DATA = (Path(__file__).resolve().parent / 'adr-logo.b64').read_text().strip()
+
+
+CSS = """
+:root{color-scheme:light;--ink:#222222;--muted:#666666;--paper:#f8f8f8;--card:#ffffff;--line:#e1e1e1;--accent:#bf1e2e;--green:#347864;--amber:#9b5d38}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.sidebar{position:fixed;inset:0 auto 0 0;width:214px;background:#202124;color:#ffffff;padding:28px 20px;display:flex;flex-direction:column;z-index:2}.brand{display:flex;gap:11px;align-items:center;margin-bottom:42px}.brand-mark{background:#bf1e2e;border-radius:9px;padding:9px;font-size:14px;font-weight:750;letter-spacing:-.5px}.brand strong{display:block;font-size:15px}.brand small{color:#b9bdc5;font-size:11px}.sidebar nav{display:grid;gap:7px}.sidebar a{color:#cdd0d6;text-decoration:none;padding:11px 14px;border-radius:7px;font-size:13px}.sidebar a:first-child{background:#383a40;color:#fff}.sidebar a:hover{background:#383a40;color:#fff}.nav-symbol{display:inline-block;width:24px;color:#cdd0d6}.sidebar-footer{margin-top:auto;font-size:11px;color:#adb2bb;padding:18px 12px 0}
+main{max-width:1600px;margin-left:214px;padding:36px 38px 24px}.page-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:26px}.eyebrow{text-transform:uppercase;letter-spacing:1.7px;color:var(--muted);font-size:10px;font-weight:700;margin-bottom:6px}h1,h2,h3{font-family:Arial,Helvetica,sans-serif;font-weight:500;line-height:1.2}h1{font-size:32px;margin:0 0 6px}h2{font-size:24px;margin:0 0 6px}h3{font-size:20px;margin:0}p{line-height:1.55}small,.subtitle{color:var(--muted)}.subtitle{margin:0;font-size:13px}.mode-pill{border:1px solid var(--line);background:var(--card);border-radius:24px;padding:7px 12px;color:var(--muted);font-size:11px;white-space:nowrap}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin:16px 0}section.overview{border:0;padding:0;background:transparent;margin-top:22px}.notice{font-size:12px;margin:0 0 20px;padding:10px 14px;border-radius:7px;border-left:3px solid #bf1e2e;background:#f2f2f2}.notice p{margin:0}.overview-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0}.toolbar form{margin:0}button{font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#bf1e2e;color:#fff;padding:11px 15px;border:1px solid transparent;border-radius:7px;cursor:pointer;min-height:40px}button:hover{filter:brightness(1.12)}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #007db5;outline-offset:3px}.secondary button{background:var(--card);border-color:#d2d2d2;color:#333333}.danger{background:#a04232}form{display:inline-block;margin:5px 7px 5px 0}
+.summary-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:22px 0}.summary-tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:14px}.summary-number{font-size:30px;line-height:1;font-weight:600;letter-spacing:-1px}.summary-label{font-size:12px;color:var(--muted)}.summary-tile.good .summary-number{color:var(--green)}.summary-tile.attention .summary-number{color:var(--amber)}.report-caption{font-size:11px;color:var(--muted);margin:10px 0}.section-label{display:flex;justify-content:space-between;align-items:baseline;margin:28px 0 12px}.section-label h2{font-size:23px}.section-label span{font-size:11px;color:var(--muted)}
+.system-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0 0 18px;align-items:start}.system-card{border:1px solid var(--line);border-radius:12px;padding:19px;min-width:0;background:var(--card);box-shadow:0 2px 4px #22222203}.system-card.review{border-color:#e7c9ba;background:#fcf8f4}.card-heading{display:flex;gap:10px;align-items:center;margin-bottom:14px}.card-heading h3{margin:0 0 3px}.system-icon{background:#f1f3f7;border:1px solid #e1e1e1;border-radius:9px;width:36px;height:36px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#292879;flex-shrink:0}.category{font-size:11px;color:var(--muted)}.status-dot{width:7px;height:7px;border-radius:50%;background:#b6b8ae;margin-left:auto;align-self:flex-start;margin-top:7px}.verified .status-dot{background:var(--green)}.review .status-dot,.observation .status-dot{background:#b2754b}.badge{display:inline-block;background:#ecece5;border-radius:5px;padding:3px 7px;font-size:10px;color:#666b5c;line-height:1.6}.verified .badge{background:#e6f0e9;color:#347560}.review .badge,.observation .badge{background:#f6e6da;color:#935432}.metrics{margin:14px 0}.metric{font-size:12px;line-height:1.6;margin:5px 0;overflow-wrap:anywhere;color:#666666}.primary-metric{color:var(--ink);font-size:15px;font-weight:600;margin-bottom:10px}.collected{font-size:10px;color:var(--muted);margin:14px 0 0}.card-details{margin-top:14px;border-top:1px solid var(--line)}.card-details:empty{display:none}.card-details details{padding-top:10px}.card-details summary{font-size:11px;color:#666666;font-weight:500}.card-details p{font-size:12px;overflow-wrap:anywhere}.detail-count{float:right;border-radius:4px;background:#f0f0f0;padding:0 5px;font-size:10px}.empty-state{font-size:12px;color:var(--muted);margin:16px 0 4px}summary{cursor:pointer;font-weight:600}.history-note{margin-top:12px;padding:10px;border-left:2px solid #b29b7a;background:#f0ece2;font-size:12px}.history-editor,.individual-checks{margin:14px 0;padding:17px 20px;background:var(--card);border:1px solid var(--line);border-radius:10px}.history-editor>summary,.individual-checks>summary{font-size:13px}.history-editor form{display:block}label{display:block;margin:12px 0}input,textarea,select{font:inherit;max-width:100%;box-sizing:border-box;padding:9px;border:1px solid #d2d2d2;border-radius:6px;background:#fffef9;color:var(--ink)}textarea{display:block;width:100%;min-height:90px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:9px;border-bottom:1px solid var(--line)}code,pre{overflow-wrap:anywhere}pre{font-size:12px}a{color:var(--accent)}
+@media(min-width:1500px){main{padding:40px 54px}.system-card{padding:22px}.system-grid{gap:18px}}
+@media(max-width:1100px){.sidebar{width:180px;padding:24px 14px}main{margin-left:180px;padding:28px 24px}.system-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){html{scroll-padding-top:14px}.sidebar{position:static;width:auto;padding:12px 16px;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:12px}.brand{margin:0;gap:8px}.brand-mark{padding:7px;font-size:11px}.brand strong{font-size:12px}.brand small,.sidebar-footer,.nav-symbol{display:none}.sidebar nav{display:flex;gap:3px}.sidebar a{padding:7px;font-size:10px}.sidebar a:last-child{display:none}main{margin:0;padding:23px 16px}h1{font-size:28px}.page-header{gap:8px;margin-bottom:18px}.mode-pill{font-size:10px;padding:5px 8px}.overview-heading{display:block}.summary-strip{gap:8px;margin:18px 0}.summary-tile{padding:12px 10px;display:block}.summary-number{font-size:25px;display:block;margin-bottom:5px}.summary-label{font-size:10px}.system-grid{grid-template-columns:1fr;gap:12px}.system-card{padding:17px}.toolbar{gap:7px}.toolbar button{font-size:11px;padding:10px 12px}.section-label{margin-top:24px}.section-label h2{font-size:22px}.history-editor,.individual-checks{padding:16px}section{padding:15px}td,th{padding:6px;font-size:12px}}
 """
+CSS += (Path(__file__).resolve().parent / 'dashboard.css').read_text()
 
 
 def page(pilot, confirmation=None, candidate=None, error=None):
@@ -629,23 +669,30 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.14.0</small>'
-    text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
-    text += '<section><h2>Combined service report</h2><p>Run the existing read-only checks once. No outlet reboots or device configuration changes are included. Allow several minutes, then refresh.</p>'
-    text += form('service-check', 'Run All Checks') + form('refresh', 'Refresh service report')
-    if pilot.service_running:
-        text += '<p>' + esc(pilot.service_progress) + '</p>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.15.0</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">On-demand checks</span></header>'
+    report = pilot.service_report
+    notice = error or pilot.result
+    if report and not error and pilot.result.startswith('Ready for an on-demand check.'):
+        notice = 'Last check completed · ' + display_time(report.get('completed_at'))
+    if pilot.service_running and not error:
+        notice = pilot.service_progress or 'Service check in progress.'
+    text += '<section class="notice" role="status"><p>' + esc(notice) + '</p></section>'
+    text += '<section class="overview"><div class="overview-heading"><div><h2>System snapshot</h2><p class="subtitle">Run a read-only check to update your service report.</p></div></div><div class="toolbar">'
+    text += form('service-check', 'Run All Checks') + '<span class="secondary">' + form('refresh', 'Refresh') + '</span>'
+    if report:
+        text += '<span class="secondary">' + form('service-report', 'Download report') + '</span>'
+    text += '</div>'
     if pilot.service_error:
         text += '<p>' + esc(pilot.service_error) + '</p>'
-    if pilot.service_report:
-        report = pilot.service_report
-        text += form('service-report', 'Download combined report')
-        text += '<p>Completed: ' + esc(report['completed_at']) + '. Verified means the read succeeded, not that every function is healthy.</p>'
-        text += '<p>' + esc(report['counts']['verified']) + ' verified reads · ' + esc(report['counts']['review']) + ' to review · ' + esc(report['counts']['unverified']) + ' unverified.</p>'
-    text += cards(pilot.service_report)
-    text += '<p>Successful reads do not establish full equipment health. Data limitations and historical observations are shown separately. Comparisons clear on app restart.</p>'
-    text += '</section>'
-    text += '<details class="history-editor"><summary>Add historical observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
+    if report:
+        counts = report['counts']
+        text += '<div class="summary-strip" aria-label="Report summary">'
+        for count, label, style in [(counts['verified'], 'Verified reads', 'good'), (counts['review'], 'To review', 'attention'), (counts['unverified'], 'Unverified', '')]:
+            text += '<div class="summary-tile ' + style + '"><span class="summary-number">' + esc(count) + '</span><span class="summary-label">' + label + '</span></div>'
+        text += '</div><p class="report-caption">Completed ' + esc(display_time(report.get('completed_at'))) + ' · Verified means the read succeeded; full equipment health remains unverified.</p>'
+    text += grouped_cards(report)
+    text += '<p class="report-caption">On-demand snapshot. Comparisons clear on app restart. Read-only checks do not reboot outlets or change device configuration.</p></section>'
+    text += '<details class="history-editor" id="history"><summary>Add historical observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
     history_fields = '<label>System <select name="system" required>' + ''.join('<option>' + esc(name) + '</option>' for name in SYSTEMS) + '</select></label><label>Subject (port or device) <input name="subject" maxlength="80" required></label><label>Observation <textarea name="note" maxlength="600" required></textarea></label>'
     text += form('service-history', 'Save historical observation', history_fields)
     if pilot.service_history:
@@ -655,9 +702,9 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     text += '</details>'
     individual_open = any((confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
         pilot.araknis_running, pilot.cp4_running, pilot.crestron_running, pilot.control4_running,
-        pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
+        pilot.sense_running, pilot.sense, pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
         pilot.bluesound, pilot.sonos, pilot.ruckus, pilot.unifi, pilot.inventory))
-    text += '<details class="individual-checks"' + (' open' if individual_open else '') + '><summary>Individual checks and connection setup</summary>'
+    text += '<details class="individual-checks" id="connections"' + (' open' if individual_open else '') + '><summary>Individual checks and connection setup</summary>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
     if pilot.araknis_candidate:
@@ -826,6 +873,44 @@ def page(pilot, confirmation=None, candidate=None, error=None):
             if not c_report['readings']:
                 text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
         text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the processor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
+    text += '</section>'
+    text += '<section><h2>Sense discovery</h2><p>Inspect your existing Sense integration in Home Assistant. Read voltage, power and energy sensors without adding Sense credentials to this app. This is an on-demand discovery, not continuous monitoring.</p>'
+    extra = ''
+    c_report = pilot.sense
+    text += form('sense-discover', 'Discover Sense readings', extra)
+    text += form('refresh', 'Refresh Sense results')
+    if pilot.sense_running:
+        text += '<p>Reading Sense through Home Assistant. Allow up to a couple of minutes, then refresh results.</p>'
+    if pilot.sense_error:
+        text += '<p>' + esc(pilot.sense_error) + '</p>'
+    if c_report:
+        text += form('sense-report', 'Download Sense report')
+        text += '<p>Snapshot retrieved: ' + esc(c_report['checked_at']) + '</p>'
+        if not c_report['entries']:
+            text += '<p>No configured Sense integration entries were found. This does not establish whether the monitor is reachable. The report records what discovery found.</p>'
+        else:
+            for entry in c_report['entries']:
+                if entry.get('disabled_by') or entry.get('state') != 'loaded':
+                    text += '<p>' + esc(entry['title']) + ': integration not loaded and enabled; readings unverified.</p>'
+            text += '<p>' + esc(len(c_report['devices'])) + ' registered devices · ' + esc(c_report['entity_count']) + ' entities · ' + esc(c_report['disabled_count']) + ' disabled · ' + esc(len(c_report['readings'])) + ' readings.</p>'
+            if c_report['truncated']:
+                text += '<p>Discovery was limited to 32 integrations or 128 readings, prioritizing diagnostic sensors. See the report for total counts.</p>'
+            if c_report['inventory_truncated']:
+                text += '<p>Device/entity inventory exceeded its limit; the report is partial.</p>'
+            text += '<details><summary>Registered devices</summary><table><tr><th>Device</th><th>Model</th><th>Registry software version</th></tr>'
+            for device in c_report['devices']:
+                text += '<tr><td>' + esc(device['name']) + '</td><td>' + esc(device['model'] or 'Not reported') + '</td><td>' + esc(device['registry_sw_version'] or 'Not reported') + '</td></tr>'
+            text += '</table></details><table><tr><th>Reading</th><th>HA reported state</th><th>Last HA update</th></tr>'
+            for reading in c_report['readings']:
+                value = str(reading['state'])
+                unit = reading['attributes'].get('unit_of_measurement')
+                if unit and reading['state'] not in ('unknown', 'unavailable', 'read failed'):
+                    value += ' ' + str(unit)
+                text += '<tr><td>' + esc(reading['name']) + '</td><td>' + esc(value) + '</td><td>' + esc(reading['last_updated'] or 'Not reported') + '</td></tr>'
+            text += '</table>'
+            if not c_report['readings']:
+                text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
+        text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the monitor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
     text += '</section>'
     text += '<section><h2>Bluesound discovery</h2><p>Inspect your existing Bluesound integration in Home Assistant. All configured players are included. No additional player credentials are needed.</p>'
     extra = ''
@@ -1006,7 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1076,6 +1161,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Disposition', 'attachment; filename="ADR-Bluesound-Discovery.json"')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_sense_report(self):
+        pilot = self.server.pilot
+        if pilot.sense_running or not pilot.sense:
+            raise ProtocolError('Complete Sense discovery before downloading its report.')
+        body = json.dumps(sense_report_payload(pilot.sense), indent=2, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Disposition', 'attachment; filename="ADR-Sense-Discovery.json"')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
@@ -1181,6 +1280,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_page()
                 elif action == 'cp4-report':
                     self.send_cp4_report()
+                elif action == 'sense-discover':
+                    pilot.start_sense_discovery()
+                    self.send_page()
+                elif action == 'sense-report':
+                    self.send_sense_report()
                 elif action == 'bluesound-discover':
                     pilot.start_bluesound_discovery()
                     self.send_page()
@@ -1229,7 +1333,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.14.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.15.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

@@ -97,7 +97,7 @@ class DashboardTests(unittest.TestCase):
                 rendered = page(pilot)
                 parser = DetailsParser(); parser.feed(rendered)
                 self.assertEqual(parser.depth, 0)
-                self.assertEqual(parser.articles, 9)
+                self.assertEqual(parser.articles, 10)
             report, _ = run_checks([('Sonos', 'a', lambda: {'players': [{'name': '<script>bad</script>', 'state': 'idle'}]})], {})
             rendered = cards(report)
             self.assertNotIn('<script>', rendered)

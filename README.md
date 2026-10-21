@@ -1,8 +1,9 @@
 # ADR Service Hub pilot
 
-Version 0.14.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.15.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
-sensor diagnostics, plus direct Araknis SSH login/help inspection.
+sensor diagnostics, Sense energy/voltage with existing HA history, and direct
+Araknis SSH login/help inspection.
 Voice access is not connected in this version.
 
 ## Included
@@ -413,3 +414,39 @@ any desired operating context once using this form. Do not enter credentials.
 Raw diagnostic reports and comparison baselines remain in memory and clear on
 restart; local historical annotations persist. Logs record annotation events
 without note text. No scheduled checks, device writes or new power actions are added.
+
+
+## Dashboard and Sense (0.15.0)
+
+ADR Billing branding, the bundled ADR logo and black system headings are used
+throughout the overview. Category controls show Power, Network or AV & Automation;
+Overview shows all ten systems. Gauges display only finite utilization readings
+between 0 and 100. Outlet tiles indicate reported power only.
+
+Run All Checks includes Sense. Individual Sense discovery and its JSON download
+are also available under Individual checks and connection setup. Only enabled
+sensor/binary-sensor entities owned by configured, loaded Sense entries are read.
+No additional Sense credentials are stored. Current reads are limited to 128
+entities across 32 entries; disabled entities and controls are inventory only.
+
+Sense history is pulled on demand from the existing HA recorder for the past
+24 hours, limited to six enabled voltage/power/energy sensors, 1 MB per response
+and 2000 states per series. Main usage/voltage labels are prioritized when limits
+apply, but every graph displays its actual source sensor name and unit. Missing
+states remain gaps, and no history is synthesized. Sampled voltage does not
+establish whether short power-quality events occurred. HA continues its existing
+Sense collection independently; this app does not change polling, install a new
+collection service or change recorder settings. Historical availability depends
+on HA recorder configuration and retention. No history or report data is uploaded
+or permanently stored by this app; downloads include it for review.
+
+The Network panel displays existing gateway latency and enabled readings from
+configured Speedtest integrations when present. It never triggers bandwidth tests,
+installs integrations or enables disabled sensors. Subscribed ISP plan speed is
+unconfigured. Registered Ruckus APs are shown by name and model. The existing HA
+snapshot does not establish per-AP online state or connected-client counts, so
+these stay explicitly unverified. Router client presence is not AP health.
+
+Dashboard timestamps use Eastern time with bundled timezone data; downloadable
+reports retain their original timestamps. Startup still performs no device checks.
+Existing connection settings, local notes and power safeguards are unchanged.

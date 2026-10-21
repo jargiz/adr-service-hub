@@ -43,16 +43,16 @@ def assess(name, snapshot):
         if name == 'UniFi' and entry and not snapshot.get('device'):
             usable = False
             limits.append('Select a UniFi device using its individual check.')
-    if name == 'Bluesound':
+    if name in ('Bluesound', 'Sense'):
         entries = snapshot.get('entries', [])
         if not entries:
             usable = False
-            limits.append('No configured Bluesound integrations found. Add Bluesound in Home Assistant Devices & services.')
+            limits.append('No configured ' + name + ' integrations found. Add it in Home Assistant Devices & services.')
         else:
-            notes.append(str(len(entries)) + ' configured Bluesound integration entries inspected.')
+            notes.append(str(len(entries)) + ' configured ' + name + ' integration entries inspected.')
             for item in entries:
                 if item.get('disabled_by') or item.get('state') != 'loaded':
-                    service.append(str(item.get('title', 'Bluesound entry')) + ': integration not loaded and enabled; player operation unverified.')
+                    service.append(str(item.get('title', name + ' entry')) + ': integration not loaded and enabled; device operation unverified.')
     readings = snapshot.get('readings', snapshot.get('sensors', snapshot.get('entities', snapshot.get('players', []))))
     if name == 'WattBox':
         usable = isinstance(snapshot.get('outlets'), list)
@@ -149,7 +149,7 @@ def compare(current, previous):
 
 
 def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=()):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.14.0', 'read_only': True,
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.15.0', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',

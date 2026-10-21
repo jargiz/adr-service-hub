@@ -117,7 +117,7 @@ class ServiceReportTests(unittest.TestCase):
             pilot.config = {'allow_reboot': True}
             (root / 'known_hosts').write_text('approved-test-key')
             jobs = pilot.service_jobs()
-            self.assertEqual([j[0] for j in jobs], ['WattBox', 'Sonos', 'Bluesound', 'Ruckus', 'UniFi', 'Crestron', 'Control4', 'Araknis', 'CP4-R'])
+            self.assertEqual([j[0] for j in jobs], ['WattBox', 'Sonos', 'Bluesound', 'Ruckus', 'UniFi', 'Crestron', 'Control4', 'Araknis', 'CP4-R', 'Sense'])
             report, _ = run_checks(jobs[:1], {})
             self.assertEqual(report['checks'][0]['status'], 'verified')
             self.assertEqual(box.resets, [])
@@ -143,6 +143,7 @@ class ServiceReportTests(unittest.TestCase):
             def ha(entry, field):
                 return {'entry': {'entry_id': entry, 'state': 'loaded'}, field: [{'state': 'off'}]}
             with ExitStack() as stack:
+                stack.enter_context(patch('agent.collect_sense', return_value={'entries': [{'state': 'loaded'}], 'readings': [{'state': '120', 'attributes': {'unit_of_measurement': 'V'}}]}))
                 stack.enter_context(patch('agent.collect_bluesound', return_value={'entries': [{'state': 'loaded'}], 'readings': [{'state': 'idle'}]}))
                 sonos = stack.enter_context(patch('agent.collect_sonos', return_value={'players': [{'state': 'idle'}]}))
                 ruckus = stack.enter_context(patch('agent.collect_ruckus', return_value=ha('ruckus-current', 'entities')))
@@ -155,7 +156,7 @@ class ServiceReportTests(unittest.TestCase):
                 araknis = stack.enter_context(patch('agent.discover_araknis', return_value=switch(100)))
                 cp4 = stack.enter_context(patch('agent.collect_cp4', return_value=processor('Monday')))
                 report, baselines = run_checks(pilot.service_jobs(), {})
-                self.assertEqual(report['counts'], {'verified': 9, 'review': 0, 'unverified': 0})
+                self.assertEqual(report['counts'], {'verified': 10, 'review': 0, 'unverified': 0})
                 sonos.assert_called_once_with()
                 ruckus.assert_called_once_with('ruckus-current')
                 unifi_read.assert_called_once_with('network', 'gateway')

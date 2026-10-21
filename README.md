@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.13.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.14.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, plus direct Araknis SSH login/help inspection.
 Voice access is not connected in this version.
@@ -384,3 +384,32 @@ failure. HA timestamps are not a heartbeat; CPU/RAM/uptime/full network diagnost
 remain unverified. No playback, grouping, volume, sleep-timer, reboot or configuration
 actions are added. Reports remain in memory, with count-only audit events.
 Live integration/report compatibility requires verification.
+
+
+## Summary dashboard and historical observations (0.14.0)
+
+Run All Checks fills nine responsive summary cards. Key readings come from the
+latest combined snapshot. Expand Service findings, Data limitations, or Observations
+and comparisons beneath each card. Read completed means the query succeeded; it
+is not a full health verdict. Unavailable/read-failed entities remain service
+findings to review, with physical connectivity/cause unverified. Unknown states,
+invalid volumes and unsupported/partial diagnostics are data limitations. Changed
+counters/start times are observations to review, not confirmed equipment faults.
+Full raw evidence remains available in the combined JSON download. Individual
+checks and connection setup are in a separate expandable section; these remain
+separate snapshots. Confirmation panels automatically open their container.
+
+Add historical observation saves an explicit note for the currently selected
+system/target. Enter the subject (such as a port) and the confirmed operating
+context, then Save. Notes are local app data, not public repository content.
+They persist across app restarts, are bounded to 50 records, and are included in
+matching-target cards and reports. They do not suppress findings or establish the
+cause of a counter. Console history requires an already approved SSH identity;
+a changed target/key does not inherit the old target's note. The form requires
+Home Assistant ingress plus CSRF and cannot run during combined checks.
+
+Existing chat history is not automatically copied into the installed app. Enter
+any desired operating context once using this form. Do not enter credentials.
+Raw diagnostic reports and comparison baselines remain in memory and clear on
+restart; local historical annotations persist. Logs record annotation events
+without note text. No scheduled checks, device writes or new power actions are added.

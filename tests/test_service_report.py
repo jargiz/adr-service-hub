@@ -59,7 +59,7 @@ class ServiceReportTests(unittest.TestCase):
         _, baseline = run_checks([('Araknis', 'a', lambda: switch(100))], {})
         report, next_base = run_checks([('Araknis', 'a', lambda: switch(900, True))], baseline)
         self.assertEqual(next_base, baseline)
-        self.assertEqual(report['checks'][0]['status'], 'review')
+        self.assertEqual(report['checks'][0]['status'], 'verified')
         def fail(): raise TimeoutError()
         report, next_base = run_checks([('Araknis', 'a', fail)], baseline)
         self.assertEqual(next_base, baseline)
@@ -77,7 +77,7 @@ class ServiceReportTests(unittest.TestCase):
             actual, _ = summarize('Control4', {'entry': entry, 'readings': [{'state': state}]})
             self.assertEqual(actual, status)
         actual, notes = summarize('Control4', {'entry': entry, 'readings': [{'attributes': {'volume_level': -0.01}}]})
-        self.assertEqual(actual, 'review')
+        self.assertEqual(actual, 'verified')
         self.assertIn('treat as unknown', str(notes))
         self.assertEqual(summarize('Control4', {'entry': None})[0], 'unverified')
         self.assertEqual(summarize('Control4', {'entry': {'state': 'setup_retry'}})[0], 'review')
@@ -96,7 +96,7 @@ class ServiceReportTests(unittest.TestCase):
                 job = thread.call_args.kwargs['target']
             # The captured job receives injected readers, so it cannot use the LAN.
             report, baseline = run_checks([('WattBox', '', lambda: {'outlets': []})], {})
-            report['checks'][0]['findings'].append('<script>bad</script>')
+            report['checks'][0]['observations'].append('<script>bad</script>')
             with patch('agent.run_checks', return_value=(report, baseline)):
                 job()
             self.assertFalse(pilot.service_running)

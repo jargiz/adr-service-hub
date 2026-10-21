@@ -1,3 +1,14 @@
+# 0.14.0
+
+- Add responsive summary cards for all nine systems, with key readings and expandable findings.
+- Separate service findings, data limitations, observations and target-specific historical notes.
+- Classify unsupported CPU and invalid volume fields as limitations rather than service faults.
+- Keep changed discard counters visible as observations without claiming a service fault or suppressing them from history.
+- Add explicit local historical annotations, bounded to 50 records, persisted with private file permissions and matched to target identity.
+- Collapse individual connection/setup panels; keep power confirmations visible when requested.
+- Preserve on-demand checks, in-memory metric baselines, and separate confirmed WattBox actions.
+- Live dashboard verification remains pending.
+
 # 0.13.0
 
 - Add read-only Bluesound discovery through configured Home Assistant integrations.

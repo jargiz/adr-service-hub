@@ -25,56 +25,87 @@ def redact(value, secrets=()):
     return value
 
 
-def summarize(name, snapshot):
-    notes, issues = [], []
+def assess(name, snapshot):
+    """Separate observed availability failures from limits of the data source."""
+    result = {'service_findings': [], 'data_limitations': [], 'observations': []}
+    service, limits, notes = (result[k] for k in ('service_findings', 'data_limitations', 'observations'))
+    usable = True
     entry = snapshot.get('entry')
     if name in ('Crestron', 'Control4', 'UniFi', 'Ruckus'):
         if not entry:
-            return 'unverified', ['No integration selected or discovered. Run its individual check to select it.']
-        if entry.get('state') != 'loaded' or entry.get('disabled_by'):
-            return 'review', ['Selected HA integration is not loaded and enabled; current device operation is unverified.']
-        notes.append('Selected HA integration is loaded; states are snapshots, not physical tests.')
-        if name == 'UniFi' and not snapshot.get('device'):
-            return 'unverified', ['Select a UniFi device using its individual check.']
+            usable = False
+            limits.append('No integration selected or discovered. Run its individual check to select it.')
+        elif entry.get('state') != 'loaded' or entry.get('disabled_by'):
+            usable = False
+            service.append('Selected HA integration is not loaded and enabled; current device operation is unverified.')
+        else:
+            notes.append('Selected HA integration is loaded; states are snapshots, not physical tests.')
+        if name == 'UniFi' and entry and not snapshot.get('device'):
+            usable = False
+            limits.append('Select a UniFi device using its individual check.')
     if name == 'Bluesound':
         entries = snapshot.get('entries', [])
         if not entries:
-            return 'unverified', ['No configured Bluesound integrations found. Add Bluesound in Home Assistant Devices & services.']
-        notes.append(str(len(entries)) + ' configured Bluesound integration entries inspected.')
-        for item in entries:
-            if item.get('disabled_by') or item.get('state') != 'loaded':
-                issues.append(str(item.get('title', 'Bluesound entry')) + ': integration not loaded and enabled; player operation unverified.')
+            usable = False
+            limits.append('No configured Bluesound integrations found. Add Bluesound in Home Assistant Devices & services.')
+        else:
+            notes.append(str(len(entries)) + ' configured Bluesound integration entries inspected.')
+            for item in entries:
+                if item.get('disabled_by') or item.get('state') != 'loaded':
+                    service.append(str(item.get('title', 'Bluesound entry')) + ': integration not loaded and enabled; player operation unverified.')
     readings = snapshot.get('readings', snapshot.get('sensors', snapshot.get('entities', snapshot.get('players', []))))
     if name == 'WattBox':
+        usable = isinstance(snapshot.get('outlets'), list)
         notes.append('Outlet inventory received. Power state does not verify connected equipment operation.')
+        off = [str(o.get('number')) + ' ' + str(o.get('label', '')) for o in snapshot.get('outlets', []) if o.get('on') is False]
+        if off:
+            notes.append('Reported off outlets: ' + '; '.join(off) + '. Expected power states are not configured.')
     elif name in ('Araknis', 'CP4-R'):
         if not readings:
-            return 'unverified', ['No diagnostic responses received.']
+            usable = False
+            limits.append('No diagnostic responses received.')
         if name == 'CP4-R' and not snapshot.get('model_verified'):
-            issues.append('CP4-R model was not verified; further processor checks are incomplete.')
+            usable = False
+            limits.append('CP4-R model was not verified; further processor checks are incomplete.')
         notes.append('Read-only console responses received; absent diagnostics remain unverified.')
         for item in readings:
-            if item.get('error') or item.get('truncated') or item.get('status') in ('read failed', 'unsupported or denied', 'partial response'):
-                issues.append(str(item.get('name', 'Diagnostic')) + ': failed, partial or unsupported response.')
+            title = str(item.get('name', 'Diagnostic'))
+            if item.get('error') or item.get('status') == 'read failed':
+                service.append(title + ': diagnostic read failed; device operation is unverified.')
+            if item.get('truncated') or item.get('status') in ('unsupported or denied', 'partial response'):
+                limits.append(title + ': partial or unsupported response.')
             if item.get('command') == 'SYSTEMREADY' and re.search(r'SystemReady:\s*False', item.get('response', ''), re.I):
-                issues.append('Processor reports SystemReady: False.')
-        if snapshot.get('not_attempted'):
-            issues.append('Some processor diagnostics remain unverified; see not_attempted in the snapshot.')
+                service.append('Processor reports SystemReady: False.')
+        limits.extend(str(item) for item in snapshot.get('not_attempted', []))
+        if name == 'CP4-R':
+            limits.append('TOP is a bounded process sample; overall CPU utilization is unverified.')
     else:
         notes.append(str(len(readings)) + ' HA readings received.')
         if not readings:
-            return ('review' if issues else 'unverified'), notes + issues + ['No supported enabled state readings were returned.']
+            usable = False
+            limits.append('No supported enabled state readings were returned.')
         for item in readings:
-            if item.get('state') in ('unknown', 'unavailable', 'read failed'):
-                issues.append(str(item.get('entity_id', 'Entity')) + ': ' + item['state'] + '; physical connectivity unverified.')
+            state = item.get('state')
+            title = str(item.get('name') or item.get('entity_id', 'Entity'))
+            if state in ('unavailable', 'read failed'):
+                service.append(title + ': ' + state + ' in HA; physical connectivity and cause remain unverified.')
+            elif state == 'unknown':
+                limits.append(title + ': state unknown in HA.')
             volume = item.get('attributes', {}).get('volume_level')
             if volume is not None and (type(volume) not in (int, float) or not 0 <= volume <= 1):
-                issues.append(str(item.get('entity_id', 'Entity')) + ': invalid reported volume; treat as unknown.')
+                limits.append(title + ': invalid reported volume; treat as unknown.')
     if snapshot.get('discovery', {}).get('limit_reached'):
-        issues.append('Discovery reached its limit; unvisited diagnostics remain unverified.')
+        limits.append('Discovery reached its limit; unvisited diagnostics remain unverified.')
     if snapshot.get('truncated') or snapshot.get('inventory_truncated'):
-        issues.append('Snapshot is limited; some readings or inventory were omitted.')
-    return ('review' if issues else 'verified'), notes + issues
+        limits.append('Snapshot is limited; some readings or inventory were omitted.')
+    limits.extend(str(item) for item in snapshot.get('limitations', []))
+    result['status'] = 'review' if service else ('verified' if usable else 'unverified')
+    return result
+
+
+def summarize(name, snapshot):
+    result = assess(name, snapshot)
+    return result['status'], result['observations'] + result['service_findings'] + result['data_limitations']
 
 
 def metrics(name, snapshot):
@@ -117,8 +148,8 @@ def compare(current, previous):
     return changes or ['No changes detected in comparable metrics.' if current else 'No comparable discard or processor start-time metrics exposed.']
 
 
-def run_checks(jobs, baselines, progress=lambda *_: None, secrets=()):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.13.0', 'read_only': True,
+def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=()):
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.14.0', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',
@@ -128,12 +159,16 @@ def run_checks(jobs, baselines, progress=lambda *_: None, secrets=()):
     next_baselines = copy.deepcopy(baselines)
     for name, target, read in jobs:
         progress(name)
-        check = {'system': name, 'started_at': now(), 'completed_at': None, 'status': 'unverified',
-            'findings': [], 'comparisons': [], 'snapshot': None}
+        check = {'system': name, 'target_id': target, 'started_at': now(), 'completed_at': None, 'status': 'unverified',
+            'findings': [], 'comparisons': [], 'snapshot': None,
+            'service_findings': [], 'data_limitations': [], 'observations': [],
+            'historical_observations': [copy.deepcopy(h) for h in history if h.get('system') == name and h.get('target') == target]}
         try:
             snapshot = read()
             check['snapshot'] = snapshot
-            check['status'], check['findings'] = summarize(name, snapshot)
+            assessment = assess(name, snapshot)
+            check.update(assessment)
+            check['findings'] = assessment['observations'] + assessment['service_findings'] + assessment['data_limitations']
             current = metrics(name, snapshot)
             key = (name, target)
             if current:
@@ -141,13 +176,16 @@ def run_checks(jobs, baselines, progress=lambda *_: None, secrets=()):
                 check['comparisons'] = compare(current, previous)
                 if previous is not None and any(previous.get(k) != v for k, v in current.items() if k in previous):
                     check['status'] = 'review'
+                    check['observations'].append('Comparison changed. This does not by itself establish a service fault.')
                 next_baselines[key] = current
             else:
                 check['comparisons'] = ['Discard/restart comparisons are not available for this snapshot.']
         except SkipCheck as exc:
             check['findings'] = [str(exc)]
+            check['data_limitations'] = [str(exc)]
         except Exception:
             # Exceptions can contain remote responses, passwords and tokens.
+            check['service_findings'] = ['Read failed. Check this system individually; device operation and cause remain unverified.']
             check['findings'] = ['Read failed. Check this system individually for connection, selection or identity setup. No retry was made.']
         check['completed_at'] = now()
         report['checks'].append(check)

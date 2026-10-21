@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from service_report import run_checks, SkipCheck
+from dashboard import cards, SYSTEMS
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
@@ -137,6 +138,15 @@ class Pilot:
             self.ruckus_selection = json.loads((self.data / 'ruckus_selection.json').read_text())['entry_id']
         except (OSError, ValueError, KeyError):
             pass
+        self.service_history = []
+        try:
+            raw_history = json.loads((self.data / 'service_history.json').read_text())
+            if isinstance(raw_history, list):
+                self.service_history = [h for h in raw_history[-50:] if isinstance(h, dict)
+                    and h.get('system') in SYSTEMS and all(isinstance(h.get(k), str)
+                        for k in ('target', 'recorded_at', 'subject', 'note'))]
+        except (OSError, ValueError):
+            pass
         self.service_report = None
         self.service_running = False
         self.service_progress = ''
@@ -176,11 +186,11 @@ class Pilot:
         def target_id(prefix, keyfile):
             pin = (self.data / keyfile).read_text() if (self.data / keyfile).exists() else ''
             identity = [self.araknis_options.get(prefix + '_host', ''),
-                self.araknis_options.get(prefix + '_ssh_port', 22), pin]
+                self.araknis_options.get('ssh_port' if prefix == 'wattbox' else prefix + '_ssh_port', 22), pin]
             return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
         return [
-            ('WattBox', 'inventory', wattbox),
+            ('WattBox', target_id('wattbox', 'known_hosts'), wattbox),
             ('Sonos', 'ha-sonos', collect_sonos),
             ('Bluesound', 'ha-bluesound', collect_bluesound),
             ('Ruckus', self.ruckus_selection, lambda: selected(collect_ruckus, self.ruckus_selection)),
@@ -193,6 +203,34 @@ class Pilot:
             ('CP4-R', target_id('cp4', 'cp4_known_hosts'),
                 lambda: console(cp4_settings, self.cp4_options, 'cp4_known_hosts', collect_cp4)),
         ]
+
+    def add_service_history(self, system, subject, note):
+        subject, note = subject.strip(), note.strip()
+        if system not in SYSTEMS or not subject or len(subject) > 80 or not note or len(note) > 600:
+            raise ProtocolError('Choose a system, a subject up to 80 characters and a note up to 600 characters.')
+        # This is an explicit local annotation. Never infer site-specific NVX mappings.
+        target = next(t for name, t, _ in self.service_jobs() if name == system)
+        if system in ('Araknis', 'CP4-R'):
+            filename = 'araknis_known_hosts' if system == 'Araknis' else 'cp4_known_hosts'
+            if not (self.data / filename).exists():
+                raise ProtocolError('Configure this system and approve its SSH identity before saving target-specific history.')
+        if system in ('Ruckus', 'Crestron', 'Control4') and not target:
+            raise ProtocolError('Run its individual check to save an integration selection first.')
+        from datetime import datetime, timezone
+        item = {'system': system, 'target': target,
+            'recorded_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'subject': subject, 'note': note}
+        history = (self.service_history + [item])[-50:]
+        atomic_json(self.data / 'service_history.json', history)
+        self.service_history = history
+        if self.service_report:
+            for check in self.service_report['checks']:
+                if check['system'] == system:
+                    # Do not attach new-target history to an old-target report.
+                    if check.get('target_id') == target:
+                        check.setdefault('historical_observations', []).append(dict(item))
+        self.audit('service_history_added')
+        self.result = 'Historical observation saved locally for this target. It does not suppress future findings.'
 
     def start_service_checks(self):
         if self.service_running:
@@ -212,7 +250,7 @@ class Pilot:
             try:
                 report, baselines = run_checks(jobs, self.service_baselines, progress,
                     tuple(self.araknis_options.get(k, '') for k in
-                        ('password', 'araknis_password', 'cp4_password')))
+                        ('password', 'araknis_password', 'cp4_password')), history=self.service_history)
                 with self.lock:
                     self.service_report = report
                     self.service_baselines = baselines
@@ -577,10 +615,12 @@ class Pilot:
 
 
 CSS = """body{font:16px system-ui;background:#f3f5f7;color:#182635;margin:0;padding:24px}
-main{max-width:850px;margin:auto}section{background:white;border:1px solid #dbe1e7;border-radius:12px;padding:20px;margin:18px 0}
+main{max-width:1200px;margin:auto}section{background:white;border:1px solid #dbe1e7;border-radius:12px;padding:20px;margin:18px 0}
 h1{margin-bottom:4px}p{line-height:1.55}button{font:inherit;background:#164d77;color:white;padding:12px 18px;border:0;border-radius:7px;cursor:pointer}
 .danger{background:#a52e27}form{display:inline-block;margin:6px 8px 6px 0}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:9px;border-bottom:1px solid #ddd}
-code{overflow-wrap:anywhere}small{color:#536574}.notice{border-left:4px solid #164d77}label{display:block;margin:12px 0}"""
+code{overflow-wrap:anywhere}small{color:#536574}.notice{border-left:4px solid #164d77}label{display:block;margin:12px 0}
+.system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:20px 0}.system-card{border:1px solid #dbe1e7;border-radius:10px;padding:18px;min-width:0;background:#fafcfd}.system-card h3{margin:0 0 10px}.badge{display:inline-block;background:#e7edf2;border-radius:20px;padding:5px 10px;font-size:13px}.verified .badge{background:#e0f0eb;color:#165946}.review .badge{background:#fae5de;color:#81371e}.observation .badge{background:#fbefcf;color:#6c5313}.metric{margin:8px 0;overflow-wrap:anywhere}.system-card details{margin-top:14px}.system-card p{overflow-wrap:anywhere}summary{cursor:pointer;font-weight:600}.history-note{margin-top:16px;padding:12px;border-left:3px solid #7b8198;background:#f1f0f6}.history-editor,.individual-checks{margin:20px 0;padding:18px;background:white;border:1px solid #dbe1e7;border-radius:12px}input,textarea,select{font:inherit;max-width:100%;box-sizing:border-box;padding:8px}textarea{display:block;width:100%;min-height:90px}.history-editor form{display:block}@media(max-width:600px){body{padding:12px}section{padding:14px}.system-grid{grid-template-columns:1fr}td,th{padding:6px;font-size:14px}}
+"""
 
 
 def page(pilot, confirmation=None, candidate=None, error=None):
@@ -589,7 +629,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.13.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.14.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Combined service report</h2><p>Run the existing read-only checks once. No outlet reboots or device configuration changes are included. Allow several minutes, then refresh.</p>'
     text += form('service-check', 'Run All Checks') + form('refresh', 'Refresh service report')
@@ -602,14 +642,22 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += form('service-report', 'Download combined report')
         text += '<p>Completed: ' + esc(report['completed_at']) + '. Verified means the read succeeded, not that every function is healthy.</p>'
         text += '<p>' + esc(report['counts']['verified']) + ' verified reads · ' + esc(report['counts']['review']) + ' to review · ' + esc(report['counts']['unverified']) + ' unverified.</p>'
-        text += '<table><tr><th>System</th><th>Result</th><th>Findings and comparisons</th></tr>'
-        for check in report['checks']:
-            text += '<tr><td>' + esc(check['system']) + '</td><td>' + esc(check['status']) + '</td><td>'
-            for finding in check['findings'] + check['comparisons']:
-                text += '<p>' + esc(finding) + '</p>'
-            text += '</td></tr>'
-        text += '</table><p>Comparisons use the same target during this app session. Restarting the app clears baselines. Individual check results below are separate snapshots.</p>'
+    text += cards(pilot.service_report)
+    text += '<p>Successful reads do not establish full equipment health. Data limitations and historical observations are shown separately. Comparisons clear on app restart.</p>'
     text += '</section>'
+    text += '<details class="history-editor"><summary>Add historical observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
+    history_fields = '<label>System <select name="system" required>' + ''.join('<option>' + esc(name) + '</option>' for name in SYSTEMS) + '</select></label><label>Subject (port or device) <input name="subject" maxlength="80" required></label><label>Observation <textarea name="note" maxlength="600" required></textarea></label>'
+    text += form('service-history', 'Save historical observation', history_fields)
+    if pilot.service_history:
+        text += '<h3>Saved history</h3>'
+        for item in pilot.service_history[-10:]:
+            text += '<p>' + esc(item['system']) + ' · ' + esc(item['subject']) + ': ' + esc(item['note']) + '</p>'
+    text += '</details>'
+    individual_open = any((confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
+        pilot.araknis_running, pilot.cp4_running, pilot.crestron_running, pilot.control4_running,
+        pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
+        pilot.bluesound, pilot.sonos, pilot.ruckus, pilot.unifi, pilot.inventory))
+    text += '<details class="individual-checks"' + (' open' if individual_open else '') + '><summary>Individual checks and connection setup</summary>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
     if pilot.araknis_candidate:
@@ -922,7 +970,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p>Values are reported by the Home Assistant UniFi integration, not fresh tests run by this app. WAN latency is not internet download speed. Last-update time is not a heartbeat. Araknis and Ruckus switches need their own connections for internal switch diagnostics.</p>'
     text += '</section>'
     if pilot.config is None:
-        return text + '<section><p>' + esc(pilot.config_error) + '</p></section></main></html>'
+        return text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>'
     c = pilot.config
     text += f'<section><h2>{esc(c["device_alias"])}</h2><p>WattBox: <code>{esc(c["wattbox_host"])}:{c["ssh_port"]}</code><br>'
     text += f'Test outlet: <strong>{c["test_outlet"]}</strong> · Expected label: <strong>{esc(c["expected_outlet_label"])}</strong></p>'
@@ -943,7 +991,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<section><h2>Test reboot</h2><p>Confirm that this outlet powers only the named test device.</p>'
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
-    text += '<p><small>On-demand local pilot. Phone voice access is not connected in this version.</small></p></main></html>'
+    text += '</details><p><small>On-demand local pilot. Phone voice access is not connected in this version.</small></p></main></html>'
     return text
 
 
@@ -1093,6 +1141,9 @@ class Handler(BaseHTTPRequestHandler):
                 if action == 'service-check':
                     pilot.start_service_checks()
                     self.send_page()
+                elif action == 'service-history':
+                    pilot.add_service_history(params.get('system', [''])[0], params.get('subject', [''])[0], params.get('note', [''])[0])
+                    self.send_page()
                 elif action == 'service-report':
                     self.send_service_report()
                 elif action == 'identity':
@@ -1178,7 +1229,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.13.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.14.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

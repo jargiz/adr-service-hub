@@ -1,3 +1,11 @@
+# 0.13.0
+
+- Add read-only Bluesound discovery through configured Home Assistant integrations.
+- Inspect all configured Bluesound players, bounded to 32 entries and 128 readings.
+- Add a Bluesound dashboard section, downloadable JSON report and ninth combined check.
+- Skip disabled devices/entities and unloaded integrations; exclude button actions and credential fields.
+- Live Bluesound compatibility remains pending.
+
 # 0.12.0
 
 - Add background Run All Checks with one combined JSON report for all eight existing checks.

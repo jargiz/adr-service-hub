@@ -36,6 +36,14 @@ def summarize(name, snapshot):
         notes.append('Selected HA integration is loaded; states are snapshots, not physical tests.')
         if name == 'UniFi' and not snapshot.get('device'):
             return 'unverified', ['Select a UniFi device using its individual check.']
+    if name == 'Bluesound':
+        entries = snapshot.get('entries', [])
+        if not entries:
+            return 'unverified', ['No configured Bluesound integrations found. Add Bluesound in Home Assistant Devices & services.']
+        notes.append(str(len(entries)) + ' configured Bluesound integration entries inspected.')
+        for item in entries:
+            if item.get('disabled_by') or item.get('state') != 'loaded':
+                issues.append(str(item.get('title', 'Bluesound entry')) + ': integration not loaded and enabled; player operation unverified.')
     readings = snapshot.get('readings', snapshot.get('sensors', snapshot.get('entities', snapshot.get('players', []))))
     if name == 'WattBox':
         notes.append('Outlet inventory received. Power state does not verify connected equipment operation.')
@@ -55,7 +63,7 @@ def summarize(name, snapshot):
     else:
         notes.append(str(len(readings)) + ' HA readings received.')
         if not readings:
-            return 'unverified', notes + ['No supported enabled state readings were returned.']
+            return ('review' if issues else 'unverified'), notes + issues + ['No supported enabled state readings were returned.']
         for item in readings:
             if item.get('state') in ('unknown', 'unavailable', 'read failed'):
                 issues.append(str(item.get('entity_id', 'Entity')) + ': ' + item['state'] + '; physical connectivity unverified.')
@@ -110,7 +118,7 @@ def compare(current, previous):
 
 
 def run_checks(jobs, baselines, progress=lambda *_: None, secrets=()):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.12.0', 'read_only': True,
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.13.0', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',

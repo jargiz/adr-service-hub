@@ -16,6 +16,7 @@ from sonos import collect as collect_sonos, SonosError
 from ruckus import collect as collect_ruckus, entries as ruckus_entries, token_value, RuckusError
 from unifi import collect as collect_unifi, UniFiError
 from crestron import collect as collect_crestron, report_payload as crestron_report_payload, CrestronError
+from bluesound import collect as collect_bluesound, report_payload as bluesound_report_payload, BluesoundError
 from control4 import collect as collect_control4, report_payload as control4_report_payload, Control4Error
 from cp4 import collect as collect_cp4, settings as cp4_settings, report_payload as cp4_report_payload, CP4Error
 from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, discover as discover_araknis, report_payload as araknis_report_payload, AraknisError
@@ -112,6 +113,9 @@ class Pilot:
             self.crestron_selection = json.loads((self.data / 'crestron_selection.json').read_text()).get('entry_id', '')
         except (OSError, ValueError, AttributeError):
             pass
+        self.bluesound = None
+        self.bluesound_error = None
+        self.bluesound_running = False
         self.control4 = None
         self.control4_error = None
         self.control4_running = False
@@ -178,6 +182,7 @@ class Pilot:
         return [
             ('WattBox', 'inventory', wattbox),
             ('Sonos', 'ha-sonos', collect_sonos),
+            ('Bluesound', 'ha-bluesound', collect_bluesound),
             ('Ruckus', self.ruckus_selection, lambda: selected(collect_ruckus, self.ruckus_selection)),
             ('UniFi', json.dumps(self.unifi_selection, sort_keys=True),
                 lambda: collect_unifi(self.unifi_selection.get('entry_id', ''), self.unifi_selection.get('device_id', ''))),
@@ -193,7 +198,7 @@ class Pilot:
         if self.service_running:
             return
         if any((self.araknis_running, self.cp4_running, self.crestron_running,
-                self.control4_running, self.active)):
+                self.control4_running, self.bluesound_running, self.active)):
             raise ProtocolError('Wait for the current check or power action to finish before running all checks.')
         jobs = self.service_jobs()
         self.service_report = None
@@ -404,6 +409,32 @@ class Pilot:
             self.control4_running = False
             raise
 
+    def start_bluesound_discovery(self):
+        if self.bluesound_running:
+            return
+        self.bluesound = None
+        self.bluesound_error = None
+        self.bluesound_running = True
+        def run():
+            result, error = None, None
+            try:
+                result = collect_bluesound()
+            except BluesoundError as exc:
+                error = str(exc)
+            except Exception:
+                error = 'Bluesound discovery failed. No device actions or configuration changes were requested.'
+            with self.lock:
+                self.bluesound = result
+                self.bluesound_error = error
+                self.bluesound_running = False
+                if result:
+                    self.audit('bluesound_status_read', str(len(result['readings'])) + ' reading(s)')
+        try:
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self.bluesound_running = False
+            raise
+
     def check_unifi(self, entry_id='', device_id=''):
         self.unifi = None
         self.unifi_error = None
@@ -558,7 +589,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}">{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.12.0</small>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><main><h1>ADR Service Agent</h1><small>ADR diagnostics pilot · 0.13.0</small>'
     text += '<section class="notice"><p>' + esc(error or pilot.result) + '</p></section>'
     text += '<section><h2>Combined service report</h2><p>Run the existing read-only checks once. No outlet reboots or device configuration changes are included. Allow several minutes, then refresh.</p>'
     text += form('service-check', 'Run All Checks') + form('refresh', 'Refresh service report')
@@ -747,6 +778,44 @@ def page(pilot, confirmation=None, candidate=None, error=None):
             if not c_report['readings']:
                 text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
         text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the processor is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
+    text += '</section>'
+    text += '<section><h2>Bluesound discovery</h2><p>Inspect your existing Bluesound integration in Home Assistant. All configured players are included. No additional player credentials are needed.</p>'
+    extra = ''
+    c_report = pilot.bluesound
+    text += form('bluesound-discover', 'Discover Bluesound readings', extra)
+    text += form('refresh', 'Refresh Bluesound results')
+    if pilot.bluesound_running:
+        text += '<p>Reading Bluesound through Home Assistant. Allow up to a couple of minutes, then refresh results.</p>'
+    if pilot.bluesound_error:
+        text += '<p>' + esc(pilot.bluesound_error) + '</p>'
+    if c_report:
+        text += form('bluesound-report', 'Download Bluesound report')
+        text += '<p>Snapshot retrieved: ' + esc(c_report['checked_at']) + '</p>'
+        if not c_report['entries']:
+            text += '<p>No configured Bluesound integration entries were found. This does not establish whether the player is reachable. The report records what discovery found.</p>'
+        else:
+            for entry in c_report['entries']:
+                if entry.get('disabled_by') or entry.get('state') != 'loaded':
+                    text += '<p>' + esc(entry['title']) + ': integration not loaded and enabled; readings unverified.</p>'
+            text += '<p>' + esc(len(c_report['devices'])) + ' registered devices · ' + esc(c_report['entity_count']) + ' entities · ' + esc(c_report['disabled_count']) + ' disabled · ' + esc(len(c_report['readings'])) + ' readings.</p>'
+            if c_report['truncated']:
+                text += '<p>Discovery was limited to 32 integrations or 128 readings, prioritizing diagnostic sensors. See the report for total counts.</p>'
+            if c_report['inventory_truncated']:
+                text += '<p>Device/entity inventory exceeded its limit; the report is partial.</p>'
+            text += '<details><summary>Registered devices</summary><table><tr><th>Device</th><th>Model</th><th>Registry software version</th></tr>'
+            for device in c_report['devices']:
+                text += '<tr><td>' + esc(device['name']) + '</td><td>' + esc(device['model'] or 'Not reported') + '</td><td>' + esc(device['registry_sw_version'] or 'Not reported') + '</td></tr>'
+            text += '</table></details><table><tr><th>Reading</th><th>HA reported state</th><th>Last HA update</th></tr>'
+            for reading in c_report['readings']:
+                value = str(reading['state'])
+                unit = reading['attributes'].get('unit_of_measurement')
+                if unit and reading['state'] not in ('unknown', 'unavailable', 'read failed'):
+                    value += ' ' + str(unit)
+                text += '<tr><td>' + esc(reading['name']) + '</td><td>' + esc(value) + '</td><td>' + esc(reading['last_updated'] or 'Not reported') + '</td></tr>'
+            text += '</table>'
+            if not c_report['readings']:
+                text += '<p>No enabled supported readings were exposed by this integration. Device inventory remains available in the report.</p>'
+        text += '<p>HA states are snapshots, not physical functional tests. An unavailable entity does not by itself establish that the player is offline. Last-update time is not a heartbeat. The report includes exposed state attributes; absent health fields remain unverified.</p>'
     text += '</section>'
     text += '<section><h2>Sonos diagnostics</h2><p>Read the player states reported by your existing Home Assistant Sonos integration.</p>'
     text += form('sonos', 'Check Sonos')
@@ -951,6 +1020,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_bluesound_report(self):
+        pilot = self.server.pilot
+        if pilot.bluesound_running or not pilot.bluesound:
+            raise ProtocolError('Complete Bluesound discovery before downloading its report.')
+        body = json.dumps(bluesound_report_payload(pilot.bluesound), indent=2, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Disposition', 'attachment; filename="ADR-Bluesound-Discovery.json"')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_cp4_report(self):
         pilot = self.server.pilot
         if pilot.cp4_running or not pilot.cp4:
@@ -1047,6 +1130,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_page()
                 elif action == 'cp4-report':
                     self.send_cp4_report()
+                elif action == 'bluesound-discover':
+                    pilot.start_bluesound_discovery()
+                    self.send_page()
+                elif action == 'bluesound-report':
+                    self.send_bluesound_report()
                 elif action == 'control4-discover':
                     pilot.start_control4_discovery(params.get('entry_id', [''])[0])
                     self.send_page()
@@ -1090,7 +1178,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.12.0 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.13.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

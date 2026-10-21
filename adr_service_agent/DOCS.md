@@ -305,3 +305,27 @@ Duplicate clicks do not launch extra runs. Other device operations are blocked
 while the combined run is active. Combined WattBox checks read inventory only:
 they never create reboot confirmations or issue power commands. Scheduling and
 alerts are not included. Live combined-report verification remains pending.
+
+
+## Bluesound / BluOS (0.13.0)
+
+Use Home Assistant's Bluesound integration, then click **Discover Bluesound readings**,
+refresh, and download **ADR-Bluesound-Discovery.json**. If not configured, add Bluesound
+under HA Settings > Devices & services > Add Integration. The agent does not install,
+reload or change integrations. Reference: https://www.home-assistant.io/integrations/bluesound/
+
+All configured Bluesound entries are included, up to 32, with exact platform and
+entry matching. Only loaded enabled entries supply states. Supported enabled
+media_player, sensor and binary_sensor entities are GET-only reads, bounded to
+128 readings (diagnostic sensors first), eight workers, 512 device records and
+1024 inventory entities. Limits are explicit. Disabled devices/entities and buttons
+are not queried. HA registry model/software metadata and allowlisted state
+attributes (volume, mute, source, exposed diagnostic fields) are retained; credentials,
+config-entry options/data, raw media URLs and playback titles are excluded.
+
+Bluesound is also the ninth **Run All Checks** item. Off/idle is not offline;
+unavailable/unknown/read failures remain findings to review, not proof of physical
+failure. HA timestamps are not a heartbeat; CPU/RAM/uptime/full network diagnostics
+remain unverified. No playback, grouping, volume, sleep-timer, reboot or configuration
+actions are added. Reports remain in memory, with count-only audit events.
+Live integration/report compatibility requires verification.

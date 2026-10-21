@@ -147,7 +147,7 @@ def network_panels(checks):
                 if value is not None and value >= 0 and sensor.get('unit') in unit:
                     return f'{value:g} ' + esc(sensor['unit'])
         return 'Unverified'
-    output = '<div class="network-panels"><section class="internet-panel"><h3>Internet</h3><p class="subtitle">Gateway-reported readings · No speed tests are triggered</p><div class="internet-metrics">'
+    output = '<div class="network-panels"><section class="internet-panel"><h3>Internet</h3><p class="subtitle">Stored gateway and speed-test readings · Run a speed test separately to refresh</p><div class="internet-metrics">'
     for label, value in [('Download speed test', metric(('download',), ('Mbps', 'Mbit/s'), True)),
         ('Upload speed test', metric(('upload',), ('Mbps', 'Mbit/s'), True)),
         ('Cloudflare latency', metric(('cloudflare', 'latency'), ('ms',))),
@@ -168,9 +168,22 @@ def network_panels(checks):
         output += '</div>'
     output += '<small>ISP plan speed is not configured. Missing measurements are not zero.</small></section><h3 class="ap-heading">Registered access points</h3><div class="ap-grid">'
 
-    aps = [d for d in ruckus.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus' and re.fullmatch(r'r\d+[a-z]*', str(d.get('model', '')).lower())]
-    if not aps:
-        output += '<p class="empty-state">Run checks to discover registered access points.</p>'
-    for ap in aps[:32]:
-        output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model', '')) + '</small><p>Status: <strong>Unverified</strong></p><p>Connected devices: <strong>Unverified</strong></p><small>The current Ruckus snapshot does not establish per-AP status or counts.</small></div>'
+    controller = ruckus.get('controller')
+    if controller is not None:
+        aps = controller.get('access_points', [])
+        output += '<p class="report-caption">Direct controller snapshot · ' + esc(controller.get('checked_at', 'Time unreported')) + '</p>'
+        if not aps:
+            output += '<p class="empty-state">The controller returned no access points.</p>'
+        for ap in aps[:128]:
+            state = 'Online' if ap.get('online') is True else 'Offline' if ap.get('online') is False else 'Unverified'
+            count = ap.get('connected_clients')
+            output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model') or 'Model unreported') + '</small><p>Status: <strong>' + state + '</strong></p><p>Connected devices: <strong>' + esc(count if type(count) is int and count >= 0 else 'Unverified') + '</strong></p><small>Controller state: ' + esc(ap.get('controller_state', 'Unreported')) + '</small></div>'
+    else:
+        aps = [d for d in ruckus.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus' and re.fullmatch(r'r\d+[a-z]*', str(d.get('model', '')).lower())]
+        if ruckus.get('controller_error'):
+            output += '<p class="empty-state">Direct controller check failed. Per-access-point readings remain unverified.</p>'
+        if not aps:
+            output += '<p class="empty-state">Run checks to discover registered access points.</p>'
+        for ap in aps[:32]:
+            output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model', '')) + '</small><p>Status: <strong>Unverified</strong></p><p>Connected devices: <strong>Unverified</strong></p><small>The current Ruckus snapshot does not establish per-AP status or counts.</small></div>'
     return output + '</div></div>'

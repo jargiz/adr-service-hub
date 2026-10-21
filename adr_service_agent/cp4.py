@@ -200,5 +200,5 @@ def collect(config, keys_path, client_factory=paramiko.SSHClient, read_fn=receiv
 
 
 def report_payload(result):
-    return {'format': 'adr-cp4-diagnostics-v1', 'agent_version': '0.15.1',
+    return {'format': 'adr-cp4-diagnostics-v1', 'agent_version': '0.16.0',
         'read_only': True, 'source': 'direct_processor_ssh', 'snapshot': result}

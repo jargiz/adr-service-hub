@@ -68,6 +68,8 @@ def collect(token=None, entries_fn=entries, registries_fn=registries, read_fn=re
                 'registry_sw_version': scalar(d.get('sw_version')), 'disabled_by': scalar(d.get('disabled_by'))})
         candidates = [e for e in registry if e.get('config_entry_id') in enabled_entries
             and e.get('platform') == 'sense' and isinstance(e.get('entity_id'), str)]
+        main_ids = {e.get('device_id') for e in candidates if e.get('device_id') and (str(e.get('original_name', '')).casefold() in ('l1 voltage', 'l2 voltage') or re.search(r'(?:^|[_.])l[12]_voltage$', e['entity_id']))}
+        result['main_monitor_device_ids'] = sorted(main_ids)
         result['entity_count'] = len(candidates)
         result['inventory_truncated'] = len(candidates) > 1024 or len(matching) > 512
         enabled = []
@@ -83,7 +85,7 @@ def collect(token=None, entries_fn=entries, registries_fn=registries, read_fn=re
                 'name': scalar(e.get('name') or e.get('original_name')) or e['entity_id'],
                 'disabled_by': scalar(e.get('disabled_by')), 'device_disabled': e.get('device_id') in blocked,
                 'state_read_supported': bool(ENTITY.fullmatch(e['entity_id']))})
-        enabled.sort(key=lambda e: (0 if any(k in e['entity_id'] for k in ('voltage', 'active_usage', 'daily_usage')) else 1, e['entity_id']))
+        enabled.sort(key=lambda e: (0 if e.get('device_id') in main_ids else 1, 0 if any(k in e['entity_id'] for k in ('voltage', 'energy_usage', 'active_usage', 'daily_usage')) else 1, e['entity_id']))
         result['enabled_supported_count'] = len(enabled)
         result['truncated'] = result['truncated'] or len(enabled) > MAX_READINGS
         def read(e):
@@ -97,13 +99,14 @@ def collect(token=None, entries_fn=entries, registries_fn=registries, read_fn=re
                     'state': 'read failed', 'last_updated': None, 'attributes': {}}
         with ThreadPoolExecutor(max_workers=8) as pool:
             result['readings'] = list(pool.map(read, enabled[:MAX_READINGS]))
+        result['main_monitor_readings'] = [r for r in result['readings'] if r.get('device_id') in main_ids]
         return result
     except Exception:
         raise SenseError('Could not inspect Sense through Home Assistant. Check the integration and API availability.') from None
 
 
 def report_payload(result):
-    return {'format': 'adr-sense-discovery-v1', 'agent_version': '0.15.1',
+    return {'format': 'adr-sense-discovery-v1', 'agent_version': '0.16.0',
         'read_only': True, 'source': 'existing_home_assistant_integration', 'snapshot': result}
 
 
@@ -121,12 +124,16 @@ def add_history(snapshot, token, get_fn=get_json, now=None):
         if attrs.get('unit_of_measurement') not in ('V', 'W', 'kW', 'Wh', 'kWh'):
             continue
         selected.append(reading)
+    main_ids = set(snapshot.get('main_monitor_device_ids', []))
     def priority(reading):
         attrs = reading['attributes']
         label = (reading['entity_id'] + ' ' + reading.get('name', '')).lower()
-        return (0 if attrs.get('device_class') == 'voltage' else
-            1 if any(part in label for part in ('active_usage', 'daily_usage', 'total_usage', ' usage', 'consumption')) else 2,
-            reading['entity_id'])
+        main = reading.get('device_id') in main_ids
+        rank = (0 if attrs.get('device_class') == 'voltage' else
+            1 if attrs.get('device_class') == 'power' and any(k in label for k in ('energy_usage', 'active_usage', 'consumption')) else
+            2 if 'daily_usage' in label or 'daily energy' in label else
+            3 if attrs.get('device_class') == 'power' else 4)
+        return (0 if main else 1, rank, reading['entity_id'])
     selected.sort(key=priority)
     snapshot['history'] = {'start': start.isoformat(), 'end': end.isoformat(), 'series': [],
         'limited': len(selected) > 6, 'note': 'Past 24 hours from HA recorder. Gaps and missing history remain unverified; readings are not a transient power-quality test.'}

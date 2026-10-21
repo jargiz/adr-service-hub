@@ -94,6 +94,41 @@ def assess(name, snapshot):
             volume = item.get('attributes', {}).get('volume_level')
             if volume is not None and (type(volume) not in (int, float) or not 0 <= volume <= 1):
                 limits.append(title + ': invalid reported volume; treat as unknown.')
+    if name == 'Ruckus':
+        if snapshot.get('controller_error'):
+            service.append('Direct access point statistics could not be read; per-access-point status and counts remain unverified.')
+        controller = snapshot.get('controller')
+        if controller is not None:
+            aps = controller.get('access_points', [])
+            notes.append(str(len(aps)) + ' access point statistics received directly from the controller.')
+            if not aps:
+                limits.append('Controller returned no access points; expected inventory is not configured.')
+            for ap in aps:
+                title = str(ap.get('name', 'Access point'))
+                if ap.get('online') is False:
+                    service.append(title + ': controller reports offline; cause unverified.')
+                elif ap.get('online') is not True:
+                    limits.append(title + ': controller state ' + str(ap.get('controller_state', 'unreported')) + ' is unverified.')
+                if ap.get('connected_clients') is None:
+                    limits.append(title + ': connected-device count unreported.')
+            if controller.get('truncated'):
+                limits.append('Access point inventory was limited to 128 records.')
+            limits.extend(controller.get('limitations', []))
+    if name == 'Sense':
+        voltages = []
+        for reading in snapshot.get('main_monitor_readings', []):
+            attrs = reading.get('attributes', {})
+            if attrs.get('device_class') != 'voltage' or attrs.get('unit_of_measurement') != 'V':
+                continue
+            try:
+                value = float(reading.get('state'))
+                if value >= 0:
+                    voltages.append((str(reading.get('name', 'Line voltage')), value))
+            except (ValueError, TypeError):
+                pass
+        # A relative source-data sanity check, not an electrical fault threshold.
+        if len(voltages) == 2 and min(v for _, v in voltages) < max(v for _, v in voltages) / 2:
+            service.append('Reported line voltages differ substantially: ' + '; '.join(f'{n}: {v:g} V' for n, v in voltages) + '. Verify the source readings; this does not establish an electrical fault.')
     if snapshot.get('discovery', {}).get('limit_reached'):
         limits.append('Discovery reached its limit; unvisited diagnostics remain unverified.')
     if snapshot.get('truncated') or snapshot.get('inventory_truncated'):
@@ -149,7 +184,7 @@ def compare(current, previous):
 
 
 def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=(), completed=lambda *_: None):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.15.1', 'read_only': True,
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.16.0', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',

@@ -12,6 +12,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from service_report import run_checks, SkipCheck
 from presentation import present_html
+from internet_test import run as run_internet_test, InternetTestError
+from ruckus_controller import settings as controller_settings, inspect_certificate, collect as collect_controller, ControllerError
 from dashboard import cards, grouped_cards, SYSTEMS, display_time
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
 from sonos import collect as collect_sonos, SonosError
@@ -102,6 +104,19 @@ class Pilot:
         self.candidates = {}
         self.result = "Ready for an on-demand check. No device commands have been sent by starting the app."
         self.inventory = None
+        self.internet_test = None
+        self.internet_test_running = False
+        self.internet_test_error = None
+        self.controller_result = None
+        self.controller_error = None
+        self.controller_running = False
+        self.controller_candidate = None
+        self.controller_candidates = {}
+        self.controller_pin = {}
+        try:
+            self.controller_pin = json.loads((self.data / "ruckus_controller_certificate.json").read_text())
+        except (OSError, ValueError):
+            pass
         self.sonos = None
         self.sonos_error = None
         self.ruckus = None
@@ -196,11 +211,21 @@ class Pilot:
                 self.araknis_options.get('ssh_port' if prefix == 'wattbox' else prefix + '_ssh_port', 22), pin]
             return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
+        def ruckus_read():
+            snapshot = selected(collect_ruckus, self.ruckus_selection)
+            if self.araknis_options.get('ruckus_controller_host'):
+                snapshot['controller_attempted'] = True
+                try:
+                    snapshot['controller'] = collect_controller(controller_settings(self.araknis_options), self.controller_pin)
+                except ControllerError as exc:
+                    snapshot['controller_error'] = str(exc)
+            return snapshot
+
         return [
             ('WattBox', target_id('wattbox', 'known_hosts'), wattbox),
             ('Sonos', 'ha-sonos', collect_sonos),
             ('Bluesound', 'ha-bluesound', collect_bluesound),
-            ('Ruckus', self.ruckus_selection, lambda: selected(collect_ruckus, self.ruckus_selection)),
+            ('Ruckus', (hashlib.sha256(json.dumps([self.ruckus_selection, self.araknis_options.get('ruckus_controller_host'), self.araknis_options.get('ruckus_controller_port', 443), self.controller_pin], sort_keys=True).encode()).hexdigest() if self.araknis_options.get('ruckus_controller_host') else self.ruckus_selection), ruckus_read),
             ('UniFi', json.dumps(self.unifi_selection, sort_keys=True),
                 lambda: collect_unifi(self.unifi_selection.get('entry_id', ''), self.unifi_selection.get('device_id', ''))),
             ('Crestron', self.crestron_selection, lambda: collect_crestron(self.crestron_selection)),
@@ -244,7 +269,7 @@ class Pilot:
         if self.service_running:
             return
         if any((self.araknis_running, self.cp4_running, self.crestron_running,
-                self.control4_running, self.bluesound_running, self.sense_running, self.active)):
+                self.control4_running, self.bluesound_running, self.sense_running, self.controller_running, self.internet_test_running, self.active)):
             raise ProtocolError('Wait for the current check or power action to finish before running all checks.')
         jobs = self.service_jobs()
         self.service_report = None
@@ -265,7 +290,7 @@ class Pilot:
             try:
                 report, baselines = run_checks(jobs, self.service_baselines, progress,
                     tuple(self.araknis_options.get(k, '') for k in
-                        ('password', 'araknis_password', 'cp4_password')), history=self.service_history, completed=completed)
+                        ('password', 'araknis_password', 'cp4_password', 'ruckus_controller_password')), history=self.service_history, completed=completed)
                 with self.lock:
                     self.service_steps = {check['system']: check['status'] for check in report['checks']}
                     self.service_completed = len(report['checks'])
@@ -283,6 +308,57 @@ class Pilot:
             threading.Thread(target=run, daemon=True).start()
         except Exception:
             self.service_running = False
+            raise
+
+    def controller_identity(self):
+        config = controller_settings(self.araknis_options)
+        digest = inspect_certificate(config)
+        nonce = secrets.token_urlsafe(24)
+        self.controller_candidates = {nonce: (time.monotonic(), config['host'], config['port'], digest)}
+        self.controller_candidate = (nonce, digest)
+
+    def controller_trust(self, nonce):
+        item = self.controller_candidates.pop(nonce, None)
+        config = controller_settings(self.araknis_options)
+        if not item or time.monotonic() - item[0] > 120 or (config['host'], config['port']) != item[1:3]:
+            raise ProtocolError('Controller identity approval expired or the target changed. Inspect again.')
+        if self.controller_pin and self.controller_pin != {'host': item[1], 'port': item[2], 'sha256': item[3]}:
+            raise ProtocolError('A different controller certificate is already saved. Investigate the change before replacing it.')
+        self.controller_pin = {'host': item[1], 'port': item[2], 'sha256': item[3]}
+        atomic_json(self.data / 'ruckus_controller_certificate.json', self.controller_pin)
+        self.controller_candidate = None
+        self.audit('ruckus_controller_identity_approved')
+        self.result = 'Ruckus controller certificate saved. You can now read access point statistics.'
+
+    def start_network_job(self, kind):
+        if kind not in ('internet_test', 'controller'):
+            raise ProtocolError('Unsupported network check.')
+        if any((self.service_running, self.internet_test_running, self.controller_running, self.active, self.araknis_running, self.cp4_running, self.crestron_running, self.control4_running, self.bluesound_running, self.sense_running)):
+            raise ProtocolError('Wait for the current check to finish.')
+        if kind == 'controller':
+            config = controller_settings(self.araknis_options)
+            if not self.controller_pin:
+                raise ProtocolError('Inspect and approve the controller certificate first.')
+        setattr(self, kind + '_running', True)
+        setattr(self, kind + '_error', None)
+        setattr(self, 'internet_test' if kind == 'internet_test' else 'controller_result', None)
+        def job():
+            result, error = None, None
+            try:
+                result = run_internet_test() if kind == 'internet_test' else collect_controller(config, self.controller_pin)
+            except (InternetTestError, ControllerError) as exc:
+                error = str(exc)
+            except Exception:
+                error = 'Network check could not complete. No automatic retry was made.'
+            with self.lock:
+                setattr(self, 'internet_test' if kind == 'internet_test' else 'controller_result', result)
+                setattr(self, kind + '_error', error)
+                setattr(self, kind + '_running', False)
+                self.audit(kind + '_finished', 'result received' if result else 'unverified')
+        try:
+            threading.Thread(target=job, daemon=True).start()
+        except Exception:
+            setattr(self, kind + '_running', False)
             raise
 
     def ready(self):
@@ -714,9 +790,9 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}"{" disabled" if disabled else ""}>{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    if pilot.service_running:
+    if pilot.service_running or pilot.internet_test_running or pilot.controller_running:
         text += '<meta http-equiv="refresh" content="3;url=./">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.15.1</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">On-demand checks</span></header>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.16.0</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">On-demand checks</span></header>'
     report = pilot.service_report
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready for an on-demand check.'):
@@ -730,6 +806,27 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<span class="secondary">' + form('service-report', 'Download report') + '</span>'
     text += '</div>'
     text += service_progress_panel(pilot)
+    text += '<details class="network-actions"' + (' open' if pilot.internet_test_running or pilot.internet_test or pilot.internet_test_error or pilot.controller_running or pilot.controller_result or pilot.controller_error else '') + '><summary>Internet speed test and access point checks</summary><p>A speed test measures download/upload performance from this service host and can temporarily use your connection capacity.</p>'
+    text += form('internet-speedtest', 'Run Internet Speed Test', disabled=pilot.service_running or pilot.internet_test_running or pilot.controller_running)
+    if pilot.internet_test_running:
+        text += '<p role="status">Internet speed test in progress. Results will update automatically.</p>'
+    if pilot.internet_test_error: text += '<p>' + esc(pilot.internet_test_error) + '</p>'
+    if pilot.internet_test:
+        text += '<p>Test request completed ' + esc(display_time(pilot.internet_test['completed_at'])) + ' · ' + ('Fresh values confirmed' if pilot.internet_test['fresh_values_confirmed'] else 'Fresh values unverified') + '</p>'
+        for reading in pilot.internet_test['readings']:
+            text += '<p>' + esc(reading['name']) + ': ' + esc(reading['state']) + ' ' + esc(reading.get('unit') or '') + '</p>'
+        for note in pilot.internet_test.get('limitations', []): text += '<p>' + esc(note) + '</p>'
+        text += '<p>Run All Checks to refresh the combined report with the stored speed-test readings.</p>'
+    text += form('controller-read', 'Read Access Points', disabled=pilot.service_running or pilot.controller_running or pilot.internet_test_running)
+    if pilot.controller_running: text += '<p role="status">Reading access points from the Ruckus controller. Results will update automatically.</p>'
+    if pilot.controller_error: text += '<p>' + esc(pilot.controller_error) + '</p>'
+    if pilot.controller_result:
+        text += '<p>Controller snapshot collected ' + esc(display_time(pilot.controller_result['checked_at'])) + '</p>'
+        for ap in pilot.controller_result['access_points']:
+            text += '<p><strong>' + esc(ap['name']) + '</strong> · ' + esc(ap.get('model') or 'Model unreported') + ' · Controller state: ' + esc(ap['controller_state']) + ' · Connected devices: ' + esc(ap['connected_clients'] if ap['connected_clients'] is not None else 'Unverified') + '</p>'
+        text += '<p>Run All Checks to include these direct controller readings in the combined report.</p>'
+    text += '</details>'
+
     if pilot.service_error:
         text += '<p>' + esc(pilot.service_error) + '</p>'
     if report:
@@ -751,9 +848,16 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     text += '</details>'
     individual_open = any((confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
         pilot.araknis_running, pilot.cp4_running, pilot.crestron_running, pilot.control4_running,
-        pilot.sense_running, pilot.sense, pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
+        pilot.controller_candidate, pilot.controller_error, pilot.sense_running, pilot.sense, pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
         pilot.bluesound, pilot.sonos, pilot.ruckus, pilot.unifi, pilot.inventory))
     text += '<details class="individual-checks" id="connections"' + (' open' if individual_open else '') + '><summary>Individual checks and connection setup</summary>'
+    text += '<section><h2>Ruckus controller connection</h2><p>Configure ruckus_controller_host, HTTPS port, username and password in app Configuration. Use the Unleashed management/master address and a monitoring account. Credentials stay in app configuration.</p>'
+    text += form('controller-identity', 'Inspect Controller Certificate')
+    if pilot.controller_candidate:
+        nonce, digest = pilot.controller_candidate
+        text += '<p>Certificate SHA-256: <code>' + esc(digest) + '</code></p><p>Compare this fingerprint using a trusted connection to your controller before approving.</p>'
+        text += form('controller-trust', 'Approve Controller Certificate', '<input type="hidden" name="nonce" value="' + esc(nonce) + '">')
+    text += '</section>'
     text += '<section><h2>Araknis switch connection</h2><p>Configure the Araknis address, SSH port, username and password in the app Configuration tab.</p>'
     text += form('araknis-identity', 'Inspect Araknis SSH identity')
     if pilot.araknis_candidate:
@@ -1284,6 +1388,8 @@ class Handler(BaseHTTPRequestHandler):
         action = urlsplit(self.path).path.strip('/')
         with pilot.lock:
             try:
+                if (getattr(pilot, 'internet_test_running', False) or getattr(pilot, 'controller_running', False)) and action not in ('refresh', 'service-report'):
+                    raise ProtocolError('A network check is running. Wait for automatic results before another action.')
                 if getattr(pilot, 'service_running', False) and action not in ('refresh', 'service-check', 'service-report'):
                     raise ProtocolError('Combined checks are running. Refresh results or wait for completion before another action.')
                 if action == 'service-check':
@@ -1294,6 +1400,18 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_page()
                 elif action == 'service-report':
                     self.send_service_report()
+                elif action == 'internet-speedtest':
+                    pilot.start_network_job('internet_test')
+                    self.send_page()
+                elif action == 'controller-read':
+                    pilot.start_network_job('controller')
+                    self.send_page()
+                elif action == 'controller-identity':
+                    pilot.controller_identity()
+                    self.send_page()
+                elif action == 'controller-trust':
+                    pilot.controller_trust(params.get('nonce', [''])[0])
+                    self.send_page()
                 elif action == 'identity':
                     self.send_page(candidate=pilot.key_candidate())
                 elif action == 'trust':
@@ -1382,7 +1500,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
-    print('ADR Service Agent 0.15.1 ready for Home Assistant ingress. No startup device actions.')
+    print('ADR Service Agent 0.16.0 ready for Home Assistant ingress. No startup device actions.')
     server.serve_forever()
 
 

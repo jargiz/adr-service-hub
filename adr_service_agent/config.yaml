@@ -1,5 +1,5 @@
 name: ADR Service Agent
-version: "0.15.1"
+version: "0.16.0"
 slug: adr_service_agent
 description: "Read-only network, Sonos, Bluesound, Sense, Control4, Crestron and CP4-R diagnostics; single-outlet WattBox pilot."
 arch:
@@ -34,6 +34,10 @@ options:
   cp4_ssh_port: 22
   cp4_username: ""
   cp4_password: ""
+  ruckus_controller_host: ""
+  ruckus_controller_port: 443
+  ruckus_controller_username: ""
+  ruckus_controller_password: ""
 schema:
   wattbox_host: str
   ssh_port: port
@@ -51,3 +55,7 @@ schema:
   cp4_ssh_port: port?
   cp4_username: str?
   cp4_password: password?
+  ruckus_controller_host: str?
+  ruckus_controller_port: port?
+  ruckus_controller_username: str?
+  ruckus_controller_password: password?

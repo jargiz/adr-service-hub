@@ -40,7 +40,7 @@ def key_readings(name, snapshot):
                 m = re.search(r'has been running for ([^\r\n]+)', text)
                 if m: lines.append(('System' if command == 'UPTIME' else 'Program') + ' uptime: ' + m.group(1).strip())
     elif name == 'Sense':
-        readings = snapshot.get('readings', [])
+        readings = snapshot.get('main_monitor_readings') or snapshot.get('readings', [])
         chosen = sorted(readings, key=lambda r: (0 if r.get('attributes', {}).get('device_class') == 'voltage' else 1 if any(t in (r.get('entity_id', '') + ' ' + r.get('name', '')).lower() for t in ('usage', 'consumption')) else 2, r.get('entity_id', '')))
         lines = [str(r.get('name', r.get('entity_id', 'Sense sensor'))) + ': ' + str(r.get('state', 'unknown')) + ' ' + str(r.get('attributes', {}).get('unit_of_measurement', '')) for r in chosen[:8]]
     elif name == 'UniFi':
@@ -52,6 +52,10 @@ def key_readings(name, snapshot):
         aps = [d for d in snapshot.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus']
         lines.append(str(len(aps)) + ' registered Ruckus devices; AP health unverified')
         lines.append(str(len(snapshot.get('entities', []))) + ' device readings')
+        if snapshot.get('controller') is not None:
+            direct = snapshot['controller'].get('access_points', [])
+            lines[0] = str(len(direct)) + ' access points read directly from controller'
+            lines.append(str(sum(ap.get('online') is True for ap in direct)) + ' online; ' + str(sum(ap.get('online') is False for ap in direct)) + ' offline; ' + str(sum(ap.get('online') is None for ap in direct)) + ' unverified')
     else:
         readings = snapshot.get('readings', snapshot.get('players', []))
         available = sum(r.get('state') not in ('unknown', 'unavailable', 'read failed') for r in readings)

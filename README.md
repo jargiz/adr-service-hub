@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.15.1 is a local Home Assistant app for a single WattBox test device,
+Version 0.16.0 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -465,3 +465,32 @@ blocked server-side and the button is disabled while running.
 
 Visible app copy uses plain system names and reading labels. Internal protocol
 identifiers and raw report schemas remain intact for diagnostics.
+
+
+## Network measurements (0.16.0)
+
+Internet speed tests are a separate explicit action. Run All Checks remains read-only
+and only reads stored speed-test results. In Settings → Devices & services, configure
+Speedtest.net once if absent. Its upstream default is hourly polling; turn off
+"Enable polling for updates" in its system options if tests should be on demand only.
+Keep its download/upload/ping sensors enabled. Open the ADR app and select
+Run Internet Speed Test. The one targeted update may use substantial Internet
+capacity; wait for automatic refresh. Duplicate in-flight app requests are blocked.
+Stored values retain their timestamps, and a completed request without confirmed
+fresh timestamps remains explicitly unverified. This measures the service host,
+not the subscribed ISP plan speed or a phone's Wi-Fi performance.
+
+For direct Ruckus Unleashed AP statistics, set ruckus_controller_host, port (443),
+username and password in app Configuration. Use the management/master address,
+not a member AP. Then open Connections → Individual checks, inspect the controller
+certificate, compare its SHA-256 fingerprint over a trusted connection, and approve.
+Read Access Points performs one direct statistics read. Run All Checks includes
+it when configured. No AP configuration, restart, or firmware commands are sent.
+HTTPS is pinned, cross-origin redirects are rejected, responses are bounded, and
+credentials/raw session data are excluded from reports. Unknown numeric controller
+state codes remain unverified until mapped from confirmed controller evidence;
+missing counts remain unknown. No live-controller compatibility claim is made.
+
+Sense now prioritizes main-monitor voltage, power and daily energy before appliance
+readings and history. A large difference between two reported line voltages is
+flagged for source verification, not classified as proof of an electrical fault.

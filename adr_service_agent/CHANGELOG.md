@@ -1,3 +1,17 @@
+# 0.16.0
+
+- Add a separate explicit Internet speed-test action using an enabled configured
+  Speedtest connection, with one targeted update and automatic result refresh.
+- Add optional pinned-HTTPS direct Ruckus Unleashed AP statistics, per-AP states
+  and connected-device counts. Unknown state codes/counts remain unverified.
+- Include direct AP reads in combined reports when configured; flag failed reads.
+- Prioritize Sense main-monitor voltage, whole-house power and daily energy over
+  detected appliances. Flag disparate line readings for source verification.
+- Preserve on-demand read-only combined checks, ingress/CSRF and power safeguards.
+- Validation: 168 automated tests pass; exact-library mocked login/statistics
+  smoke check passes. Controller and speed-test service setup/live compatibility
+  require house validation.
+
 # 0.15.1
 
 - Use plain system/reading labels throughout the app, including upstream messages

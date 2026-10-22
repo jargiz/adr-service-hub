@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.18.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.18.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -574,3 +574,10 @@ actions; it does not represent new live checks. The selected category persists w
 A fixed, hash-authorized script saves only that category in session storage and
 makes no network or device requests. If storage is unavailable, navigation still
 works, but refresh returns to Overview.
+
+## Mobile navigation (0.18.1)
+
+Phone navigation remains outside the scrolling dashboard sections and tracks the
+visible viewport in the embedded app. Add observation and the Test Apple TV card
+are removed. Existing saved notes remain readable; WattBox identity approval
+remains under Connections.

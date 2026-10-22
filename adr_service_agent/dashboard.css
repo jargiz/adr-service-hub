@@ -71,3 +71,8 @@ main{margin:0;padding:25px 18px 28px}.page-header{margin-bottom:8px;gap:8px;alig
 body:has(#view-all:checked) .sidebar label[for=view-all],body:has(#view-power:checked) .sidebar label[for=view-power],body:has(#view-network:checked) .sidebar label[for=view-network],body:has(#view-av:checked) .sidebar label[for=view-av]{background:#faeef0;color:#aa2032}
 @media(max-width:700px){.category-launcher{grid-template-columns:repeat(2,minmax(0,1fr))}.category-tile{padding:21px 18px;min-height:155px;justify-content:center}.category-tile strong{font-size:16px}.category-tile small{font-size:11px}.category-tile>span{width:44px;height:44px}.category-tile svg{width:26px;height:26px}.monitoring-panel{margin-top:24px}.tile-summary{touch-action:manipulation}.mobile-tools a{min-width:40px;min-height:40px}}
 .sidebar .mobile-tools a{color:#69717b;background:#f5f6f8;min-width:44px;min-height:44px}
+
+/* Navigation stays outside the scrolling sections, above all dashboard content. */
+main+.group-tabs{display:none}
+@media(max-width:700px){main+.group-tabs{display:grid;position:fixed;left:0;right:0;bottom:0;z-index:1000;background:#fff;isolation:isolate}body{padding-bottom:calc(100px + env(safe-area-inset-bottom))}}
+body:has(#view-all:checked) main+.group-tabs label[for=view-all],body:has(#view-power:checked) main+.group-tabs label[for=view-power],body:has(#view-network:checked) main+.group-tabs label[for=view-network],body:has(#view-av:checked) main+.group-tabs label[for=view-av]{background:transparent;color:#b22235;font-weight:500}

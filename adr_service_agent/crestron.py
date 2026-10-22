@@ -143,5 +143,5 @@ def collect(entry_id='', token=None, entries_fn=entries, registries_fn=registrie
 
 
 def report_payload(result):
-    return {'format': 'adr-crestron-discovery-v1', 'agent_version': '0.18.0',
+    return {'format': 'adr-crestron-discovery-v1', 'agent_version': '0.18.1',
         'read_only': True, 'source': 'existing_home_assistant_integration', 'snapshot': result}

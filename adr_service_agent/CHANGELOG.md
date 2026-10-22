@@ -1,3 +1,9 @@
+# 0.18.1
+
+- Keep phone navigation at the visible bottom while scrolling, including ingress frames.
+- Remove Add observation and the Test Apple TV card. Retain saved notes and
+  WattBox identity approval under Connections.
+
 # 0.18.0
 
 - Add a light touch-panel layout with three large category launch tiles, native

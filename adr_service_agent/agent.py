@@ -31,7 +31,7 @@ from araknis import settings as araknis_settings, inspect as inspect_araknis, sn
 
 
 # Fixed, hash-authorized presentation code; no device or network requests.
-VIEW_SCRIPT = '(() => {\n  const key = \'adr-view:\' + location.pathname;\n  const views = [\'all\', \'power\', \'network\', \'av\'];\n  try {\n    const saved = sessionStorage.getItem(key);\n    if (views.includes(saved)) {\n      const selected = document.getElementById(\'view-\' + saved);\n      if (selected) selected.checked = true;\n    }\n  } catch (_) {}\n  document.querySelectorAll(\'input[name="dashboard-view"]\').forEach(input => {\n    input.addEventListener(\'change\', () => {\n      if (input.checked) {\n        try { sessionStorage.setItem(key, input.id.slice(5)); } catch (_) {}\n      }\n    });\n  });\n})();'
+VIEW_SCRIPT = '(() => {\n  const key = \'adr-view:\' + location.pathname;\n  const views = [\'all\', \'power\', \'network\', \'av\'];\n  try {\n    const saved = sessionStorage.getItem(key);\n    if (views.includes(saved)) {\n      const selected = document.getElementById(\'view-\' + saved);\n      if (selected) selected.checked = true;\n    }\n  } catch (_) {}\n  document.querySelectorAll(\'input[name="dashboard-view"]\').forEach(input => {\n    input.addEventListener(\'change\', () => {\n      if (input.checked) {\n        try { sessionStorage.setItem(key, input.id.slice(5)); } catch (_) {}\n      }\n    });\n  });\n  const nav = document.querySelector(\'main + .group-tabs\');\n  const pin = () => {\n    if (!nav || !matchMedia(\'(max-width:700px)\').matches) {\n      if (nav) nav.style.bottom = \'\';\n      return;\n    }\n    let bottom = window.visualViewport ? visualViewport.offsetTop + visualViewport.height : innerHeight;\n    try {\n      if (window.frameElement && window.parent !== window) {\n        const frame = window.frameElement.getBoundingClientRect();\n        const outer = window.parent.visualViewport;\n        const edge = outer ? outer.offsetTop + outer.height : window.parent.innerHeight;\n        bottom = Math.min(bottom, edge - frame.top);\n      }\n    } catch (_) {}\n    nav.style.bottom = Math.max(0, innerHeight - bottom) + \'px\';\n  };\n  addEventListener(\'resize\', pin, {passive:true});\n  addEventListener(\'scroll\', pin, {passive:true});\n  if (window.visualViewport) {\n    visualViewport.addEventListener(\'resize\', pin, {passive:true});\n    visualViewport.addEventListener(\'scroll\', pin, {passive:true});\n  }\n  try {\n    if (window.parent !== window) {\n      window.parent.addEventListener(\'scroll\', pin, {passive:true});\n      window.parent.addEventListener(\'resize\', pin, {passive:true});\n    }\n  } catch (_) {}\n  pin();\n\n})();'
 VIEW_SCRIPT_HASH = base64.b64encode(hashlib.sha256(VIEW_SCRIPT.encode()).digest()).decode()
 
 def atomic_json(path, value):
@@ -855,6 +855,17 @@ def monitoring_panel(pilot):
     return output + '</section>'
 
 
+
+def finish_page(text):
+    start = text.find('<nav class="group-tabs"')
+    if start >= 0:
+        end = text.index('</nav>', start) + len('</nav>')
+        navigation = text[start:end]
+        text = text[:start] + text[end:]
+        text = text.replace('</main>', '</main>' + navigation, 1)
+    return present_html(text).replace('</html>', '<script type="module">' + VIEW_SCRIPT + '</script></html>')
+
+
 def page(pilot, confirmation=None, candidate=None, error=None):
     esc = lambda value: html.escape(str(value), quote=True)
     def form(action, label, extra="", danger=False, disabled=False):
@@ -865,7 +876,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<meta http-equiv="refresh" content="3;url=./">'
     elif pilot.monitor_active and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
         text += '<meta http-equiv="refresh" content="60;url=./">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV/Automation</span></label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="mobile-tools"><a href="#history" aria-label="History">{icon("history")}</a><a href="#connections" aria-label="Connections">{icon("settings")}</a></div><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.18.0</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div></header>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV/Automation</span></label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="mobile-tools"><a href="#history" aria-label="History">{icon("history")}</a><a href="#connections" aria-label="Connections">{icon("settings")}</a></div><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.18.1</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div></header>'
     report = pilot.service_report
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready.'):
@@ -919,14 +930,11 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += grouped_cards(report)
     text += monitoring_panel(pilot) + network_tools
     text += '</section>'
-    text += '<details class="history-editor" id="history"><summary>Add observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
-    history_fields = '<label>System <select name="system" required>' + ''.join('<option>' + esc(name) + '</option>' for name in SYSTEMS) + '</select></label><label>Subject (port or device) <input name="subject" maxlength="80" required></label><label>Observation <textarea name="note" maxlength="600" required></textarea></label>'
-    text += form('service-history', 'Save historical observation', history_fields)
     if pilot.service_history:
-        text += '<h3>Saved history</h3>'
+        text += '<details class="history-editor" id="history"><summary>Saved observations</summary>'
         for item in pilot.service_history[-10:]:
             text += '<p>' + esc(item['system']) + ' · ' + esc(item['subject']) + ': ' + esc(item['note']) + '</p>'
-    text += '</details>'
+        text += '</details>'
     controller_setup_needed = bool(report and any(c.get('system') == 'Ruckus' and (c.get('snapshot') or {}).get('controller_error') == 'Inspect and approve this Ruckus controller certificate first.' for c in report.get('checks', [])))
     individual_open = any((controller_setup_needed, confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
         pilot.araknis_running, pilot.cp4_running, pilot.crestron_running, pilot.control4_running,
@@ -1290,15 +1298,13 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p>Values are reported by the Home Assistant UniFi integration, not fresh tests run by this app. WAN latency is not internet download speed. Last-update time is not a heartbeat. Araknis and Ruckus switches need their own connections for internal switch diagnostics.</p>'
     text += '</section>'
     if pilot.config is None:
-        return present_html(text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>').replace('</html>', '<script type="module">' + VIEW_SCRIPT + '</script></html>')
+        return finish_page(text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>')
     c = pilot.config
-    text += f'<section><h2>{esc(c["device_alias"])}</h2><p>WattBox: <code>{esc(c["wattbox_host"])}:{c["ssh_port"]}</code><br>'
-    text += f'Test outlet: <strong>{c["test_outlet"]}</strong> · Expected label: <strong>{esc(c["expected_outlet_label"])}</strong></p>'
-    text += form('identity', 'Inspect SSH identity') + form('check', 'Read outlet labels and status')
-    text += form('refresh', 'Refresh results') + '</section>'
+    text += '<details class="setup-help"><summary>WattBox connection</summary>'
+    text += form('identity', 'Inspect SSH identity') + '</details>'
     if candidate:
         nonce, fp = candidate
-        text += '<section><h2>WattBox approval</h2><p>Verify the address above and compare this SSH fingerprint with a trusted local connection before approving. No password has been sent.</p>'
+        text += '<section><h2>WattBox approval</h2><p>Verify the configured address and compare this SSH fingerprint with a trusted local connection before approving. No password has been sent.</p>'
         text += f'<p><code>{esc(fp)}</code></p>'
         text += form('trust', 'Approve this identity', f'<input type="hidden" name="nonce" value="{esc(nonce)}">') + '</section>'
     if pilot.inventory:
@@ -1312,7 +1318,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
     text += '</details><p><small>ADR Media Integrators</small></p></main></html>'
-    return present_html(text).replace('</html>', '<script type="module">' + VIEW_SCRIPT + '</script></html>')
+    return finish_page(text)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1583,7 +1589,7 @@ def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
     server.pilot.start_monitoring()
-    print('ADR Service Agent 0.18.0 ready. Local monitoring uses configured intervals; no automatic power actions.')
+    print('ADR Service Agent 0.18.1 ready. Local monitoring uses configured intervals; no automatic power actions.')
     try:
         server.serve_forever()
     finally:

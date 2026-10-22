@@ -50,7 +50,7 @@ def key_readings(name, snapshot):
                 lines.append(str(sensor.get('name', 'Sensor')) + ': ' + str(sensor.get('state')) + (' ' + str(sensor['unit']) if sensor.get('unit') else ''))
     elif name == 'Ruckus':
         aps = [d for d in snapshot.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus']
-        lines.append(str(len(aps)) + ' registered Ruckus devices; AP health unverified')
+        lines.append(str(len(aps)) + ' registered devices')
         lines.append(str(len(snapshot.get('entities', []))) + ' device readings')
         if snapshot.get('controller') is not None:
             direct = snapshot['controller'].get('access_points', [])
@@ -112,9 +112,9 @@ def cards(report, names=SYSTEMS):
         else:
             label, style = 'Read completed', 'verified'
         monogram, category = CATEGORIES[name]
-        output += '<article class="system-card ' + style + (' sense-card' if name == 'Sense' else '') + '"><header class="card-heading"><span class="system-icon" aria-hidden="true">' + monogram + '</span><div><h3>' + esc(name) + '</h3><span class="category">' + category + '</span></div><span class="status-dot" aria-hidden="true"></span></header><span class="badge">' + label + '</span>'
+        output += '<article class="system-card ' + style + (' sense-card' if name == 'Sense' else '') + '"><header class="card-heading"><span class="system-icon" aria-hidden="true">' + monogram + '</span><div><h3>' + esc(name) + '</h3></div><span class="status-dot" aria-hidden="true"></span></header><span class="badge">' + label + '</span>'
         if check is None:
-            output += '<p class="empty-state">Run a check to collect this system’s snapshot.</p></article>'
+            output += '<p class="empty-state">Not checked yet.</p></article>'
             continue
         service, limits = check.get('service_findings', []), check.get('data_limitations', [])
         lines = key_readings(name, check.get('snapshot'))
@@ -126,7 +126,7 @@ def cards(report, names=SYSTEMS):
             output += '</div>'
         output += '<p class="collected">Updated ' + esc(display_time(check.get('completed_at'))) + '</p>'
         groups = [('Service findings', service), ('Data limitations', limits),
-            ('Observations and comparisons', check.get('observations', []) + check.get('comparisons', []))]
+            ('Observations', check.get('observations', []) + check.get('comparisons', []))]
         output += '<div class="card-details">'
         for title, lines in groups:
             if lines:
@@ -158,7 +158,7 @@ def grouped_cards(report):
         output += '<label for="view-' + key + '">' + title + '</label>'
     output += '</div>'
     for key, title, names in GROUPS:
-        output += '<div class="system-group group-' + key + '"><div class="section-label"><h2>' + title + '</h2><span>' + str(len(names)) + ' systems · snapshot data</span></div>'
+        output += '<div class="system-group group-' + key + '"><div class="section-label"><h2>' + title + '</h2></div>'
         if key == 'network': output += network_panels(checks)
         output += cards(report, names) + '</div>'
     return output + '</div>'

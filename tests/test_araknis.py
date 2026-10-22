@@ -276,7 +276,7 @@ Reception Counters
         pilot.araknis = {'checked_at': 'test', 'welcome': '<script>alert(1)</script>',
             'help': 'help', 'truncated': False}
         rendered = page(pilot)
-        self.assertIn('Araknis switch connection', rendered)
+        self.assertIn('Araknis connection', rendered)
         self.assertNotIn('<script>', rendered)
         self.assertNotIn(self.config['password'], rendered)
 

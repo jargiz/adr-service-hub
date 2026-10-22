@@ -1,3 +1,13 @@
+# 0.17.2
+
+- Give the logo/navigation a white background with dark navigation text.
+- Keep headings on one line, shorten mobile setup titles and remove section
+  taglines, system-category subtitles and repeated explanatory captions.
+- Collapse completed-check lists and setup help while preserving errors, approvals
+  and measurements.
+- Validation: 186 tests pass; browser checks at 320, 390, 768 and 1440 pixels
+  confirm white navigation, single-line headings and no page-width overflow.
+
 # 0.17.1
 
 - Show the specific Ruckus certificate-approval requirement beside AP cards and

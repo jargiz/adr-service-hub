@@ -88,5 +88,5 @@ def collect(token=None, entries_fn=entries, registries_fn=registries, read_fn=re
 
 
 def report_payload(result):
-    return {'format': 'adr-bluesound-discovery-v1', 'agent_version': '0.17.1',
+    return {'format': 'adr-bluesound-discovery-v1', 'agent_version': '0.17.2',
         'read_only': True, 'source': 'existing_home_assistant_integration', 'snapshot': result}

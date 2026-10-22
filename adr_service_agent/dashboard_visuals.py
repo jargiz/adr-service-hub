@@ -94,7 +94,7 @@ def history_chart(series):
     valid = [(t, v) for t, v in parsed if v is not None]
     title = esc(series.get('name', 'Sense sensor'))
     unit = esc(series.get('unit', ''))
-    output = '<div class="sense-series"><h4>' + title + ' <small>' + unit + '</small></h4>'
+    output = '<div class="sense-series"><h4 title="' + title + '">' + title + ' <small>' + unit + '</small></h4>'
     if not valid:
         return output + '<p class="empty-state">' + esc(series.get('status', 'History unavailable')) + '</p></div>'
     low, high = min(v for _, v in valid), max(v for _, v in valid)
@@ -150,7 +150,7 @@ def network_panels(checks):
                 if value is not None and value >= 0 and sensor.get('unit') in unit:
                     return f'{value:g} ' + esc(sensor['unit']) + (' <small>Needs verification</small>' if speed and issues else '')
         return 'Unverified'
-    output = '<div class="network-panels"><section class="internet-panel"><h3>Internet</h3><p class="subtitle">Stored gateway and speed-test readings · Run a speed test separately to refresh</p><div class="internet-metrics">'
+    output = '<div class="network-panels"><section class="internet-panel"><h3>Internet</h3><div class="internet-metrics">'
     for label, value in [('Download speed test', metric(('download',), ('Mbps', 'Mbit/s'), True)),
         ('Upload speed test', metric(('upload',), ('Mbps', 'Mbit/s'), True)),
         ('Cloudflare latency', metric(('cloudflare', 'latency'), ('ms',))),
@@ -173,7 +173,7 @@ def network_panels(checks):
         for label, value in latency[:8]:
             output += '<div class="latency-bar-row"><span>' + esc(label) + '</span><div class="latency-bar-track"><span style="width:' + str(value / ceiling * 100) + '%"></span></div><strong>' + f'{value:g} ms' + '</strong></div>'
         output += '</div>'
-    output += '<small>ISP plan speed is not configured. Missing measurements are not zero.</small></section><h3 class="ap-heading">Registered access points</h3><div class="ap-grid">'
+    output += '</section><h3 class="ap-heading">Access points</h3><div class="ap-grid">'
 
     controller = ruckus.get('controller')
     if controller is not None:
@@ -184,16 +184,16 @@ def network_panels(checks):
         for ap in aps[:128]:
             state = 'Online' if ap.get('online') is True else 'Offline' if ap.get('online') is False else 'Unverified'
             count = ap.get('connected_clients')
-            output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model') or 'Model unreported') + '</small><p>Status: <strong>' + state + '</strong></p><p>Connected devices: <strong>' + esc(count if type(count) is int and count >= 0 else 'Unverified') + '</strong></p><small>Controller state: ' + esc(ap.get('controller_state', 'Unreported')) + '</small></div>'
+            output += '<div class="ap-card"><h4 title="' + esc(ap.get('name', 'Access point')) + '">' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model') or 'Model unreported') + '</small><p>Status: <strong>' + state + '</strong></p><p>Connected devices: <strong>' + esc(count if type(count) is int and count >= 0 else 'Unverified') + '</strong></p><small>Controller state: ' + esc(ap.get('controller_state', 'Unreported')) + '</small></div>'
     else:
         aps = [d for d in ruckus.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus' and re.fullmatch(r'r\d+[a-z]*', str(d.get('model', '')).lower())]
         if ruckus.get('controller_error'):
-            output += '<p class="empty-state">Direct controller check failed. Per-access-point readings remain unverified.</p>'
+            output += '<p class="empty-state">Controller unavailable.</p>'
             output += '<p class="measurement-warning">' + esc(ruckus['controller_error']) + '</p>'
             if ruckus['controller_error'] == 'Inspect and approve this Ruckus controller certificate first.':
                 output += '<p>Open <a href="#connections">Connections</a>, inspect and approve the controller certificate, then select Read Access Points.</p>'
         if not aps:
-            output += '<p class="empty-state">Run checks to discover registered access points.</p>'
+            output += '<p class="empty-state">No access points collected.</p>'
         for ap in aps[:32]:
-            output += '<div class="ap-card"><h4>' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model', '')) + '</small><p>Status: <strong>Unverified</strong></p><p>Connected devices: <strong>Unverified</strong></p><small>The current Ruckus snapshot does not establish per-AP status or counts.</small></div>'
+            output += '<div class="ap-card"><h4 title="' + esc(ap.get('name', 'Access point')) + '">' + esc(ap.get('name', 'Access point')) + '</h4><small>' + esc(ap.get('model', '')) + '</small><p>Status: <strong>Unverified</strong></p><p>Connected devices: <strong>Unverified</strong></p></div>'
     return output + '</div></div>'

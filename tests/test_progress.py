@@ -50,7 +50,7 @@ class ProgressTests(unittest.TestCase):
             self.assertIn('Unverified', rendered)
             pilot.service_report = None
             pilot.service_error = 'Stopped'
-            self.assertIn('Checks stopped before completion', page(pilot))
+            self.assertIn('Checks stopped', page(pilot))
             self.assertNotIn('http-equiv="refresh"', page(pilot))
 
     def test_refresh_get_never_starts_or_restarts_device_checks(self):

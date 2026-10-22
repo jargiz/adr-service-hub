@@ -14,3 +14,30 @@ body{border-top:4px solid #bf1e2e}h1,h2,h3,h4{color:#111!important}h1{font-weigh
 .monitoring-panel{margin:20px 0 24px;padding:20px;border:1px solid #e4e4e4;border-left:3px solid #bf1e2e;border-radius:8px;background:#fafafa}.monitoring-panel h3{margin:0 0 16px;font-size:18px}.monitoring-times{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.monitoring-times strong{font-size:14px;color:#111}.monitoring-times p{margin:6px 0;font-size:14px}.monitoring-times small{display:block;font-size:12px;color:#555}.monitoring-panel>.report-caption{margin-bottom:0}@media(max-width:550px){.monitoring-times{grid-template-columns:1fr;gap:16px}}
 
 .measurement-warning{padding:12px 14px;background:#fff5e8;border-left:3px solid #ac6b31;color:#62411e;font-size:13px;line-height:1.55;overflow-wrap:anywhere}.measurement-warning strong{color:#62411e}
+
+/* Compact dashboard: light navigation, one-line headings and no section taglines. */
+.sidebar{background:#fff;color:#222;border-right:1px solid #e3e5e8}
+.brand{background:#fff;margin:0 0 24px;padding:0;border-radius:0;justify-content:flex-start}
+.adr-brand-logo{object-position:left center}
+.sidebar nav label,.sidebar nav a{color:#40444b}
+.sidebar nav label:hover,.sidebar nav a:hover{background:#f2f3f5;color:#111}
+.sidebar nav label:active{background:#f9eaec;color:#a41827}
+.sidebar-footer{color:#777;border-top:1px solid #eee;margin-top:auto;padding-left:0}
+h1,h2,h3,h4{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.page-header{margin-bottom:18px;flex-wrap:wrap}.page-header>div{min-width:0}.page-header h1{margin:0}
+.card-heading>div{min-width:0;flex:1}.card-heading h3{margin:0;font-size:19px}.card-heading{margin-bottom:12px}.card-heading .status-dot{flex-shrink:0;margin-left:0}
+.section-label{flex-wrap:nowrap;margin:24px 0 12px}.section-label h2{margin:0}
+.setup-help{margin:0 0 12px;font-size:12px}.setup-help>summary{font-size:12px;color:#666;font-weight:400}.setup-help p{margin-bottom:6px}
+.tool-note{color:#777;font-size:11px}.network-actions>summary,.individual-checks>summary,.history-editor>summary{white-space:nowrap}
+@media(max-width:700px){
+.sidebar{padding:14px 16px;border-right:0;border-bottom:1px solid #e3e5e8}.brand{margin:0 0 8px;width:118px;padding:0}.adr-brand-logo{width:108px;height:58px}
+.sidebar nav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:0;scrollbar-width:none}.sidebar nav::-webkit-scrollbar{display:none}.sidebar nav label,.sidebar nav a{flex:0 0 auto;white-space:nowrap;font-size:11px;padding:9px 8px;min-height:36px}
+main{padding:20px 16px}.page-header h1{font-size:26px;letter-spacing:-.6px}.mode-pill{font-size:10px;padding:4px 8px}.section-label h2{font-size:21px}
+.individual-checks h2{font-size:19px}.individual-checks h3{font-size:16px}.monitoring-panel h3{font-size:17px}.progress-heading h3{font-size:16px}
+.internet-panel h3,.ap-heading{font-size:18px}.ap-card h4{font-size:16px}.card-heading h3{font-size:19px}
+}
+@media(max-width:380px){.page-header h1{font-size:24px}.section-label h2{font-size:20px}.individual-checks h2{font-size:18px}}
+
+.sidebar nav label,.sidebar nav a{margin:0;display:flex;align-items:center}
+
+.completed-steps{margin-top:12px}.completed-steps>summary{font-size:12px;color:#666;font-weight:400}.ap-grid>p{grid-column:1/-1}

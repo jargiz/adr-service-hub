@@ -1,5 +1,6 @@
 """Ingress-only ADR pilot. No HA config mounts or Supervisor API access."""
 import html
+import base64
 import hashlib
 import json
 import os
@@ -28,6 +29,10 @@ from control4 import collect as collect_control4, report_payload as control4_rep
 from cp4 import collect as collect_cp4, settings as cp4_settings, report_payload as cp4_report_payload, CP4Error
 from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, discover as discover_araknis, report_payload as araknis_report_payload, AraknisError
 
+
+# Fixed, hash-authorized presentation code; no device or network requests.
+VIEW_SCRIPT = '(() => {\n  const key = \'adr-view:\' + location.pathname;\n  const views = [\'all\', \'power\', \'network\', \'av\'];\n  try {\n    const saved = sessionStorage.getItem(key);\n    if (views.includes(saved)) {\n      const selected = document.getElementById(\'view-\' + saved);\n      if (selected) selected.checked = true;\n    }\n  } catch (_) {}\n  document.querySelectorAll(\'input[name="dashboard-view"]\').forEach(input => {\n    input.addEventListener(\'change\', () => {\n      if (input.checked) {\n        try { sessionStorage.setItem(key, input.id.slice(5)); } catch (_) {}\n      }\n    });\n  });\n})();'
+VIEW_SCRIPT_HASH = base64.b64encode(hashlib.sha256(VIEW_SCRIPT.encode()).digest()).decode()
 
 def atomic_json(path, value):
     temp = path.with_suffix(".tmp")
@@ -1285,7 +1290,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p>Values are reported by the Home Assistant UniFi integration, not fresh tests run by this app. WAN latency is not internet download speed. Last-update time is not a heartbeat. Araknis and Ruckus switches need their own connections for internal switch diagnostics.</p>'
     text += '</section>'
     if pilot.config is None:
-        return present_html(text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>')
+        return present_html(text + '<section><p>' + esc(pilot.config_error) + '</p></section></details></main></html>').replace('</html>', '<script type="module">' + VIEW_SCRIPT + '</script></html>')
     c = pilot.config
     text += f'<section><h2>{esc(c["device_alias"])}</h2><p>WattBox: <code>{esc(c["wattbox_host"])}:{c["ssh_port"]}</code><br>'
     text += f'Test outlet: <strong>{c["test_outlet"]}</strong> · Expected label: <strong>{esc(c["expected_outlet_label"])}</strong></p>'
@@ -1307,7 +1312,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
     text += '</details><p><small>ADR Media Integrators</small></p></main></html>'
-    return present_html(text)
+    return present_html(text).replace('</html>', '<script type="module">' + VIEW_SCRIPT + '</script></html>')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1321,7 +1326,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-" + VIEW_SCRIPT_HASH + "'; form-action 'self'; base-uri 'none'")
         self.end_headers()
         self.wfile.write(body)
 

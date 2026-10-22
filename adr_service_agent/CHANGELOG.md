@@ -1,11 +1,14 @@
-# 0.18.0 (design preview)
+# 0.18.0
 
 - Add a light touch-panel layout with three large category launch tiles, native
   outline icons, concise system cards and expandable readings/graphs.
 - Use bottom category navigation on phones and a white sidebar on desktop.
 - Move detailed status/progress and network tools behind compact controls while
   retaining source readings, findings, approval steps and all existing safeguards.
-- Preview only: 186 tests and four-width/category browser checks pass.
+- Remove the top-right monitoring badge and use AV/Automation consistently.
+- Preserve the selected category across automatic refresh with a fixed,
+  hash-authorized presentation script; no new device or network requests.
+- Validation: automated suite and four-width/category browser checks pass.
 
 # 0.17.2
 

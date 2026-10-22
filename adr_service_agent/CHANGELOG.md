@@ -1,3 +1,12 @@
+# 0.18.0 (design preview)
+
+- Add a light touch-panel layout with three large category launch tiles, native
+  outline icons, concise system cards and expandable readings/graphs.
+- Use bottom category navigation on phones and a white sidebar on desktop.
+- Move detailed status/progress and network tools behind compact controls while
+  retaining source readings, findings, approval steps and all existing safeguards.
+- Preview only: 186 tests and four-width/category browser checks pass.
+
 # 0.17.2
 
 - Give the logo/navigation a white background with dark navigation text.

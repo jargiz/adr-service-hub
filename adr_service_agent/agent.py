@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from service_report import run_checks, SkipCheck
 from monitoring import MonitoringSchedule
 from presentation import present_html
+from ui_icons import icon
 from internet_test import run as run_internet_test, InternetTestError
 from ruckus_controller import settings as controller_settings, inspect_certificate, collect as collect_controller, ControllerError
 from dashboard import cards, grouped_cards, SYSTEMS, display_time
@@ -859,7 +860,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<meta http-equiv="refresh" content="3;url=./">'
     elif pilot.monitor_active and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
         text += '<meta http-equiv="refresh" content="60;url=./">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.17.2</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div><span class="mode-pill">{"Automatic monitoring" if pilot.monitor.enabled else "Manual checks"}</span></header>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV &amp; Automation</span></label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="mobile-tools"><a href="#history" aria-label="History">{icon("history")}</a><a href="#connections" aria-label="Connections">{icon("settings")}</a></div><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.18.0</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div><span class="mode-pill">{"Automatic monitoring" if pilot.monitor.enabled else "Manual checks"}</span></header>'
     report = pilot.service_report
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready.'):
@@ -867,35 +868,35 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     if pilot.service_running and not error:
         notice = pilot.service_progress or 'Service check in progress.'
     text += '<section class="notice" role="status"><p>' + esc(notice) + '</p></section>'
-    text += '<section class="overview"><div class="overview-heading"><div><h2>System snapshot</h2></div></div><div class="toolbar">'
+    text += '<section class="overview"><div class="overview-heading"><div><h2>Quick actions</h2></div></div><div class="toolbar">'
     text += form('service-check', 'Checks running…' if pilot.service_running else 'Run All Checks', disabled=pilot.service_running) + '<span class="secondary">' + form('refresh', 'Refresh') + '</span>'
     if report:
         text += '<span class="secondary">' + form('service-report', 'Download report') + '</span>'
     text += '</div>'
-    text += monitoring_panel(pilot)
-    text += service_progress_panel(pilot)
-    text += '<details class="network-actions"' + (' open' if pilot.internet_test_running or pilot.internet_test or pilot.internet_test_error or pilot.controller_running or pilot.controller_result or pilot.controller_error else '') + '><summary>Network tools</summary><p class="tool-note">Speed tests use connection bandwidth.</p>'
-    text += form('internet-speedtest', 'Run Internet Speed Test', disabled=pilot.service_running or pilot.internet_test_running or pilot.controller_running)
+    progress_markup = service_progress_panel(pilot)
+    network_tools = ''
+    network_tools += '<details class="network-actions"' + (' open' if pilot.internet_test_running or pilot.internet_test or pilot.internet_test_error or pilot.controller_running or pilot.controller_result or pilot.controller_error else '') + '><summary>Network tools</summary><p class="tool-note">Speed tests use connection bandwidth.</p>'
+    network_tools += form('internet-speedtest', 'Run Internet Speed Test', disabled=pilot.service_running or pilot.internet_test_running or pilot.controller_running)
     if pilot.internet_test_running:
-        text += '<p role="status">Internet speed test in progress. Results will update automatically.</p>'
-    if pilot.internet_test_error: text += '<p>' + esc(pilot.internet_test_error) + '</p>'
+        network_tools += '<p role="status">Internet speed test in progress. Results will update automatically.</p>'
+    if pilot.internet_test_error: network_tools += '<p>' + esc(pilot.internet_test_error) + '</p>'
     if pilot.internet_test:
         if pilot.internet_test.get('quality_issues'):
-            text += '<p class="measurement-warning"><strong>Speed-test result needs verification.</strong></p>'
-        text += '<p>Test request completed ' + esc(display_time(pilot.internet_test['completed_at'])) + ' · ' + ('Fresh values confirmed' if pilot.internet_test['fresh_values_confirmed'] else 'Fresh values unverified') + '</p>'
+            network_tools += '<p class="measurement-warning"><strong>Speed-test result needs verification.</strong></p>'
+        network_tools += '<p>Test request completed ' + esc(display_time(pilot.internet_test['completed_at'])) + ' · ' + ('Fresh values confirmed' if pilot.internet_test['fresh_values_confirmed'] else 'Fresh values unverified') + '</p>'
         for reading in pilot.internet_test['readings']:
-            text += '<p>' + esc(reading['name']) + ': ' + esc(reading['state']) + ' ' + esc(reading.get('unit') or '') + '</p>'
-        for note in pilot.internet_test.get('limitations', []): text += '<p>' + esc(note) + '</p>'
-        text += '<p>The next system check includes the stored speed-test readings. Run All Checks to update the report sooner.</p>'
-    text += form('controller-read', 'Read Access Points', disabled=pilot.service_running or pilot.controller_running or pilot.internet_test_running)
-    if pilot.controller_running: text += '<p role="status">Reading access points from the Ruckus controller. Results will update automatically.</p>'
-    if pilot.controller_error: text += '<p>' + esc(pilot.controller_error) + '</p>'
+            network_tools += '<p>' + esc(reading['name']) + ': ' + esc(reading['state']) + ' ' + esc(reading.get('unit') or '') + '</p>'
+        for note in pilot.internet_test.get('limitations', []): network_tools += '<p>' + esc(note) + '</p>'
+        network_tools += '<p>The next system check includes the stored speed-test readings. Run All Checks to update the report sooner.</p>'
+    network_tools += form('controller-read', 'Read Access Points', disabled=pilot.service_running or pilot.controller_running or pilot.internet_test_running)
+    if pilot.controller_running: network_tools += '<p role="status">Reading access points from the Ruckus controller. Results will update automatically.</p>'
+    if pilot.controller_error: network_tools += '<p>' + esc(pilot.controller_error) + '</p>'
     if pilot.controller_result:
-        text += '<p>Controller snapshot collected ' + esc(display_time(pilot.controller_result['checked_at'])) + '</p>'
+        network_tools += '<p>Controller snapshot collected ' + esc(display_time(pilot.controller_result['checked_at'])) + '</p>'
         for ap in pilot.controller_result['access_points']:
-            text += '<p><strong>' + esc(ap['name']) + '</strong> · ' + esc(ap.get('model') or 'Model unreported') + ' · Controller state: ' + esc(ap['controller_state']) + ' · Connected devices: ' + esc(ap['connected_clients'] if ap['connected_clients'] is not None else 'Unverified') + '</p>'
-        text += '<p>Run All Checks to include these direct controller readings in the combined report.</p>'
-    text += '</details>'
+            network_tools += '<p><strong>' + esc(ap['name']) + '</strong> · ' + esc(ap.get('model') or 'Model unreported') + ' · Controller state: ' + esc(ap['controller_state']) + ' · Connected devices: ' + esc(ap['connected_clients'] if ap['connected_clients'] is not None else 'Unverified') + '</p>'
+        network_tools += '<p>Run All Checks to include these direct controller readings in the combined report.</p>'
+    network_tools += '</details>'
 
     if pilot.service_error:
         text += '<p>' + esc(pilot.service_error) + '</p>'
@@ -905,8 +906,13 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for count, label, style in [(counts['verified'], 'Verified reads', 'good'), (counts['review'], 'To review', 'attention'), (counts['unverified'], 'Unverified', '')]:
             text += '<div class="summary-tile ' + style + '"><span class="summary-number">' + esc(count) + '</span><span class="summary-label">' + label + '</span></div>'
         text += '</div><p class="report-caption">Completed ' + esc(display_time(report.get('completed_at'))) + '</p>'
+    if pilot.service_running or pilot.service_error:
+        text += progress_markup
+    elif progress_markup:
+        text += '<details class="run-history"><summary>Check history</summary>' + progress_markup + '</details>'
     if report or not pilot.service_running:
         text += grouped_cards(report)
+    text += monitoring_panel(pilot) + network_tools
     text += '</section>'
     text += '<details class="history-editor" id="history"><summary>Add observation</summary><p>Save operating context for the current system, such as an NVX-connected port confirmed working normally. Notes persist across app restarts and do not suppress new findings. Do not enter passwords or tokens.</p>'
     history_fields = '<label>System <select name="system" required>' + ''.join('<option>' + esc(name) + '</option>' for name in SYSTEMS) + '</select></label><label>Subject (port or device) <input name="subject" maxlength="80" required></label><label>Observation <textarea name="note" maxlength="600" required></textarea></label>'
@@ -1572,7 +1578,7 @@ def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
     server.pilot.start_monitoring()
-    print('ADR Service Agent 0.17.2 ready. Local monitoring uses configured intervals; no automatic power actions.')
+    print('ADR Service Agent 0.18.0 ready. Local monitoring uses configured intervals; no automatic power actions.')
     try:
         server.serve_forever()
     finally:

@@ -92,9 +92,10 @@ def history_chart(series):
             continue
     parsed.sort()
     valid = [(t, v) for t, v in parsed if v is not None]
-    title = esc(series.get('name', 'Sense sensor'))
+    full_title = str(series.get('name', 'Sense sensor'))
+    title = esc(re.sub(r'^Sense\s+\d+\s+', '', full_title))
     unit = esc(series.get('unit', ''))
-    output = '<div class="sense-series"><h4 title="' + title + '">' + title + ' <small>' + unit + '</small></h4>'
+    output = '<div class="sense-series"><h4 title="' + esc(full_title) + '">' + title + ' <small>' + unit + '</small></h4>'
     if not valid:
         return output + '<p class="empty-state">' + esc(series.get('status', 'History unavailable')) + '</p></div>'
     low, high = min(v for _, v in valid), max(v for _, v in valid)

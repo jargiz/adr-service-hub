@@ -1,4 +1,5 @@
 """Small server-rendered summary cards; every external label is escaped."""
+from ui_icons import icon
 import html
 import re
 from datetime import datetime
@@ -95,6 +96,28 @@ CATEGORIES = {
 }
 
 
+SYSTEM_ICONS = {'WattBox': 'power', 'Sense': 'energy', 'UniFi': 'network',
+    'Araknis': 'switch', 'Ruckus': 'wireless', 'Sonos': 'audio', 'Bluesound': 'audio',
+    'Crestron': 'home', 'CP4-R': 'processor', 'Control4': 'home'}
+
+
+def tile_value(name, snapshot, lines):
+    if name == 'WattBox':
+        outlets = snapshot.get('outlets', [])
+        return str(sum(o.get('on') is True for o in outlets)) + ' / ' + str(len(outlets)) + ' outlets on'
+    if name in ('Sonos', 'Bluesound', 'Crestron', 'Control4'):
+        readings = snapshot.get('readings', snapshot.get('players', []))
+        available = sum(r.get('state') not in ('unknown', 'unavailable', 'read failed') for r in readings)
+        return str(available) + ' / ' + str(len(readings)) + ' available'
+    if name == 'Ruckus' and snapshot.get('controller_error'):
+        return 'AP status unverified'
+    if name == 'UniFi':
+        for sensor in snapshot.get('sensors', []):
+            if sensor.get('entity_id', '').endswith('_state'):
+                return str(sensor.get('state', 'Unverified')).capitalize()
+    return lines[0] if lines else 'No readings'
+
+
 def cards(report, names=SYSTEMS):
     esc = lambda x: html.escape(str(x), quote=True)
     checks = {c['system']: c for c in (report or {}).get('checks', [])}
@@ -111,35 +134,39 @@ def cards(report, names=SYSTEMS):
             label, style = 'Observations to review', 'observation'
         else:
             label, style = 'Read completed', 'verified'
-        monogram, category = CATEGORIES[name]
-        output += '<article class="system-card ' + style + (' sense-card' if name == 'Sense' else '') + '"><header class="card-heading"><span class="system-icon" aria-hidden="true">' + monogram + '</span><div><h3>' + esc(name) + '</h3></div><span class="status-dot" aria-hidden="true"></span></header><span class="badge">' + label + '</span>'
+        short_label = {'Service findings to review': 'Review findings', 'Observations to review': 'Review notes'}.get(label, label)
+        snapshot = (check or {}).get('snapshot') or {}
+        lines = key_readings(name, snapshot) if check else []
+        headline = tile_value(name, snapshot, lines) if check else 'Not checked yet'
+        stamp = display_time(check.get('completed_at')) if check else ''
+        short_stamp = stamp.split('·')[-1].strip()
+        output += '<article class="system-card ' + style + (' sense-card' if name == 'Sense' else '') + '"><details class="system-tile"><summary class="tile-summary" aria-label="' + esc(name + ' readings: ' + short_label) + '">'
+        output += '<div class="tile-icon-row"><span class="system-icon">' + icon(SYSTEM_ICONS[name]) + '</span><span class="status-dot" aria-hidden="true"></span></div><h3>' + esc(name) + '</h3><span class="badge" aria-label="' + esc(label) + '">' + short_label + '</span>'
+        output += '<p class="tile-value">' + esc(headline) + '</p><span class="tile-footer"><span title="' + esc(stamp) + '">' + esc(short_stamp) + '</span>' + icon('chevron') + '</span></summary><div class="tile-body">'
         if check is None:
-            output += '<p class="empty-state">Not checked yet.</p></article>'
+            output += '<p class="empty-state">Not checked yet.</p></div></details></article>'
             continue
-        service, limits = check.get('service_findings', []), check.get('data_limitations', [])
-        lines = key_readings(name, check.get('snapshot'))
-        output += visuals(name, check.get('snapshot'), lines)
+        output += visuals(name, snapshot, lines)
         if lines:
             output += '<div class="metrics">'
             for index, line in enumerate(lines):
                 output += '<p class="metric' + (' primary-metric' if index == 0 else '') + '">' + esc(line) + '</p>'
             output += '</div>'
-        output += '<p class="collected">Updated ' + esc(display_time(check.get('completed_at'))) + '</p>'
-        groups = [('Service findings', service), ('Data limitations', limits),
+        output += '<p class="collected">Updated ' + esc(stamp) + '</p><div class="card-details">'
+        groups = [('Service findings', check.get('service_findings', [])), ('Data limitations', check.get('data_limitations', [])),
             ('Observations', check.get('observations', []) + check.get('comparisons', []))]
-        output += '<div class="card-details">'
-        for title, lines in groups:
-            if lines:
-                output += '<details><summary>' + title + ' <span class="detail-count">' + str(len(lines)) + '</span></summary>'
-                for line in lines: output += '<p>' + esc(line) + '</p>'
+        for title, notes in groups:
+            if notes:
+                output += '<details><summary>' + title + ' <span class="detail-count">' + str(len(notes)) + '</span></summary>'
+                for line in notes: output += '<p>' + esc(line) + '</p>'
                 output += '</details>'
         history = check.get('historical_observations', [])
         if history:
             output += '<div class="history-note"><strong>Historical observations</strong>'
             for item in history:
                 output += '<p>' + esc(display_time(item.get('recorded_at'))) + ' · ' + esc(item.get('subject', '')) + ': ' + esc(item.get('note', '')) + '</p>'
-            output += '<small>Historical context does not dismiss new symptoms or suppress findings.</small></div>'
-        output += '</div></article>'
+            output += '</div>'
+        output += '</div></div></details></article>'
     return output + '</div>'
 
 
@@ -150,13 +177,19 @@ GROUPS = (('power', 'Power', ('WattBox', 'Sense')),
 
 def grouped_cards(report):
     checks = {c['system']: c for c in (report or {}).get('checks', [])}
-    output = '<div class="dashboard-groups">'
+    output = '<div class="dashboard-groups" id="systems">'
     for key, title in [('all', 'Overview')] + [(k, t) for k, t, _ in GROUPS]:
         output += '<input class="view-radio" type="radio" name="dashboard-view" id="view-' + key + '"' + (' checked' if key == 'all' else '') + ' aria-label="' + title + '">'
-    output += '<div class="group-tabs" aria-label="System categories">'
+    output += '<div class="category-launcher" aria-label="System categories">'
+    for key, title, names in GROUPS:
+        review = sum(checks.get(name, {}).get('status') == 'review' for name in names)
+        read = sum(checks.get(name, {}).get('status') == 'verified' for name in names)
+        status = str(review) + ' review' if review else str(read) + ' read' if read else 'Not checked'
+        output += '<label class="category-tile category-' + key + '" for="view-' + key + '"><span>' + icon(key if key != 'av' else 'av') + '</span><strong>' + ('AV / Auto' if key == 'av' else title) + '</strong><small>' + status + '</small></label>'
+    output += '</div><nav class="group-tabs" aria-label="System views">'
     for key, title in [('all', 'Overview')] + [(k, t) for k, t, _ in GROUPS]:
-        output += '<label for="view-' + key + '">' + title + '</label>'
-    output += '</div>'
+        output += '<label for="view-' + key + '" aria-label="' + title + '">' + icon('home' if key == 'all' else key) + '<span>' + ('AV / Auto' if key == 'av' else title) + '</span></label>'
+    output += '</nav>'
     for key, title, names in GROUPS:
         output += '<div class="system-group group-' + key + '"><div class="section-label"><h2>' + title + '</h2></div>'
         if key == 'network': output += network_panels(checks)

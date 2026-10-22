@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.17.2 is a local Home Assistant app for a single WattBox test device,
+Version 0.18.0 (design preview) is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -556,3 +556,20 @@ section taglines, repeated system categories and category-count captions. Shorte
 setup titles for mobile widths and move configuration instructions into collapsed
 Setup details. Preserve measurement warnings, connection errors, approvals,
 reports and monitoring behaviour. Long dynamic headings can be read via tooltips.
+
+
+## Light touch-panel design preview (0.18.0)
+
+The overview opens with three large Power, Network and AV/Automation tiles.
+Selecting a category shows its systems. On phones, category navigation stays at
+the bottom; desktop uses the light sidebar. System tiles show a native outline
+icon, recorded status, one key reading and update time. Tap a tile to expand its
+readings, charts and findings. Original metadata stays available in expanded
+content and downloads; no sensor reading or device-control behaviour is changed.
+
+This branch is a visual review build, not a published main-branch update.
+Validation: 186 automated tests pass. Browser checks cover all four category views
+at 320, 390, 768 and 1440 pixels, plus native tile expansion and page overflow.
+The conversation preview uses the previously supplied report and disables device
+actions; it does not represent new live checks. Category persistence across timed
+GET refresh remains a follow-up before promoting this design to main.

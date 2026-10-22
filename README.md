@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.17.0 is a local Home Assistant app for a single WattBox test device,
+Version 0.17.1 is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -530,3 +530,20 @@ running/deferred states. Opening or refreshing the page never triggers a check.
 
 Automatic jobs only invoke the existing read-only report and the explicit bandwidth
 measurement service. No schedule can invoke WattBox resets or configuration changes.
+
+
+## Measurement quality and controller setup (0.17.1)
+
+The known speedtest-cli failed-probe ping value of 1,800,000 ms is retained in raw
+reports but excluded from the latency chart scale. Associated bandwidth readings
+are labelled as needing verification. The app does not replace the numbers with
+zero, claim an ISP fault or treat a failed server probe as a valid latency reading.
+Gateway latency remains separate. Verify/select the Speedtest server and compare
+bandwidth with a gateway or other wired test before drawing a network conclusion.
+Reference: https://github.com/sivel/speedtest-cli/blob/master/speedtest.py
+
+A missing matching Ruckus certificate approval now appears directly beside the
+AP cards with the setup instruction. The Connections section opens for that
+condition; inspect, independently compare and approve the controller certificate,
+then Read Access Points. No trust is automatically granted. Unknown controller
+status codes still remain unverified until confirmed from controller evidence.

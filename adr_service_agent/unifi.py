@@ -1,4 +1,5 @@
 """Selected-device UniFi sensor reads via Home Assistant; no control actions."""
+from internet_quality import quality_issues
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -127,6 +128,7 @@ def collect_dashboard(entry_id='', device_id='', token=None):
         result['internet_readings'] = speedtest_readings(token)
     except Exception:
         result['limitations'].append('Existing Speedtest HA readings could not be inspected; gateway readings remain separate.')
+    result['internet_quality_issues'] = quality_issues(result['internet_readings'])
     if not result['internet_readings']:
         result['limitations'].append('No enabled Speedtest readings received. ISP download/upload test results remain unverified.')
     return result

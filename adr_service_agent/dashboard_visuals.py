@@ -1,4 +1,5 @@
 """Read-only snapshot charts. Missing measurements never become zero or online."""
+from internet_quality import quality_issues, failed_latency
 import html
 import math
 import re
@@ -138,14 +139,16 @@ def history_chart(series):
 def network_panels(checks):
     uni = (checks.get('UniFi') or {}).get('snapshot') or {}
     ruckus = (checks.get('Ruckus') or {}).get('snapshot') or {}
-    sensors = uni.get('sensors', []) + uni.get('internet_readings', [])
+    internet = uni.get('internet_readings', [])
+    issues = quality_issues(internet)
+    sensors = uni.get('sensors', []) + internet
     def metric(words, unit, speed=False):
         for sensor in sensors:
             label = str(sensor.get('name', '')).lower()
             if all(word in label for word in words) and (not speed or 'speedtest' in label or 'speed test' in label):
                 value = number(sensor.get('state'))
                 if value is not None and value >= 0 and sensor.get('unit') in unit:
-                    return f'{value:g} ' + esc(sensor['unit'])
+                    return f'{value:g} ' + esc(sensor['unit']) + (' <small>Needs verification</small>' if speed and issues else '')
         return 'Unverified'
     output = '<div class="network-panels"><section class="internet-panel"><h3>Internet</h3><p class="subtitle">Stored gateway and speed-test readings · Run a speed test separately to refresh</p><div class="internet-metrics">'
     for label, value in [('Download speed test', metric(('download',), ('Mbps', 'Mbit/s'), True)),
@@ -154,8 +157,12 @@ def network_panels(checks):
         ('Google latency', metric(('google', 'latency'), ('ms',)))]:
         output += '<div><span>' + label + '</span><strong>' + value + '</strong></div>'
     output += '</div>'
+    for issue in issues:
+        output += '<p class="measurement-warning"><strong>Speed-test result needs verification.</strong> ' + esc(issue) + '</p>'
     latency = []
     for sensor in sensors:
+        if sensor in internet and failed_latency(sensor):
+            continue
         label = str(sensor.get('name', ''))
         value = number(sensor.get('state'))
         if sensor.get('unit') == 'ms' and ('latency' in label.lower() or 'ping' in label.lower()) and value is not None and value >= 0:
@@ -182,6 +189,9 @@ def network_panels(checks):
         aps = [d for d in ruckus.get('devices', []) if str(d.get('manufacturer', '')).casefold() == 'ruckus' and re.fullmatch(r'r\d+[a-z]*', str(d.get('model', '')).lower())]
         if ruckus.get('controller_error'):
             output += '<p class="empty-state">Direct controller check failed. Per-access-point readings remain unverified.</p>'
+            output += '<p class="measurement-warning">' + esc(ruckus['controller_error']) + '</p>'
+            if ruckus['controller_error'] == 'Inspect and approve this Ruckus controller certificate first.':
+                output += '<p>Open <a href="#connections">Connections</a>, inspect and approve the controller certificate, then select Read Access Points.</p>'
         if not aps:
             output += '<p class="empty-state">Run checks to discover registered access points.</p>'
         for ap in aps[:32]:

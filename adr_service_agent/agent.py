@@ -857,7 +857,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<meta http-equiv="refresh" content="3;url=./">'
     elif pilot.monitor_active and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
         text += '<meta http-equiv="refresh" content="60;url=./">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.17.0</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">{"Automatic monitoring" if pilot.monitor.enabled else "Manual checks"}</span></header>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">Overview</label><label for="view-power">Power</label><label for="view-network">Network</label><label for="view-av">AV &amp; Automation</label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.17.1</div></aside><main id="overview"><header class="page-header"><div><div class="eyebrow">ADR Media Integrators</div><h1>Service overview</h1><p class="subtitle">Your connected systems, at a glance.</p></div><span class="mode-pill">{"Automatic monitoring" if pilot.monitor.enabled else "Manual checks"}</span></header>'
     report = pilot.service_report
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready.'):
@@ -878,6 +878,8 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         text += '<p role="status">Internet speed test in progress. Results will update automatically.</p>'
     if pilot.internet_test_error: text += '<p>' + esc(pilot.internet_test_error) + '</p>'
     if pilot.internet_test:
+        if pilot.internet_test.get('quality_issues'):
+            text += '<p class="measurement-warning"><strong>Speed-test result needs verification.</strong></p>'
         text += '<p>Test request completed ' + esc(display_time(pilot.internet_test['completed_at'])) + ' · ' + ('Fresh values confirmed' if pilot.internet_test['fresh_values_confirmed'] else 'Fresh values unverified') + '</p>'
         for reading in pilot.internet_test['readings']:
             text += '<p>' + esc(reading['name']) + ': ' + esc(reading['state']) + ' ' + esc(reading.get('unit') or '') + '</p>'
@@ -912,7 +914,8 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         for item in pilot.service_history[-10:]:
             text += '<p>' + esc(item['system']) + ' · ' + esc(item['subject']) + ': ' + esc(item['note']) + '</p>'
     text += '</details>'
-    individual_open = any((confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
+    controller_setup_needed = bool(report and any(c.get('system') == 'Ruckus' and (c.get('snapshot') or {}).get('controller_error') == 'Inspect and approve this Ruckus controller certificate first.' for c in report.get('checks', [])))
+    individual_open = any((controller_setup_needed, confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
         pilot.araknis_running, pilot.cp4_running, pilot.crestron_running, pilot.control4_running,
         pilot.controller_candidate, pilot.controller_error, pilot.sense_running, pilot.sense, pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
         pilot.bluesound, pilot.sonos, pilot.ruckus, pilot.unifi, pilot.inventory))
@@ -1567,7 +1570,7 @@ def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
     server.pilot.start_monitoring()
-    print('ADR Service Agent 0.17.0 ready. Local monitoring uses configured intervals; no automatic power actions.')
+    print('ADR Service Agent 0.17.1 ready. Local monitoring uses configured intervals; no automatic power actions.')
     try:
         server.serve_forever()
     finally:

@@ -1,3 +1,15 @@
+# 0.17.1
+
+- Show the specific Ruckus certificate-approval requirement beside AP cards and
+  open connection setup for that condition, preserving explicit certificate trust.
+- Flag the speedtest-cli 1,800,000 ms failed-probe value and associated bandwidth
+  readings for verification. Keep raw values but exclude that value from latency
+  chart scaling, so gateway latency remains readable.
+- Distinguish fresh timestamps from measurement quality in manual test results.
+- Validation: 186 automated tests pass, including failed-probe recognition, raw
+  value preservation, chart scaling, freshness/quality separation and approval UI.
+- Live AP login and bandwidth accuracy still require validation at the house.
+
 # 0.17.0
 
 - Enable automatic local system monitoring every 20 minutes and speed tests every

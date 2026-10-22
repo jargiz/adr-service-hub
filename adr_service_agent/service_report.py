@@ -1,4 +1,5 @@
 """On-demand read-only orchestration and evidence comparisons. No device actions."""
+from internet_quality import quality_issues
 import copy
 import re
 from datetime import datetime, timezone
@@ -94,9 +95,15 @@ def assess(name, snapshot):
             volume = item.get('attributes', {}).get('volume_level')
             if volume is not None and (type(volume) not in (int, float) or not 0 <= volume <= 1):
                 limits.append(title + ': invalid reported volume; treat as unknown.')
+    if name == 'UniFi':
+        service.extend(quality_issues(snapshot.get('internet_readings', [])))
     if name == 'Ruckus':
         if snapshot.get('controller_error'):
             service.append('Direct access point statistics could not be read; per-access-point status and counts remain unverified.')
+            if snapshot.get('controller_error') == 'Inspect and approve this Ruckus controller certificate first.':
+                limits.append('Connection setup incomplete: inspect and approve the Ruckus controller certificate under Connections, then read access points.')
+            else:
+                limits.append(str(snapshot['controller_error'])[:600])
         controller = snapshot.get('controller')
         if controller is not None:
             aps = controller.get('access_points', [])
@@ -184,7 +191,7 @@ def compare(current, previous):
 
 
 def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=(), completed=lambda *_: None):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.17.0', 'read_only': True,
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.17.1', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',

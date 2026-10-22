@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from urllib.request import Request, build_opener, ProxyHandler
 
 from crestron import get_json
+from internet_quality import quality_issues
 from ruckus import registries, token_value
 from sonos import NoRedirect
 from unifi import speedtest_readings
@@ -52,7 +53,9 @@ def run(token=None, get_fn=get_json, registries_fn=registries, post_fn=None, rea
         except (ValueError, TypeError): fresh.append(False)
     required = all(any(word in r.get('name', '').casefold() and r.get('unit') in ('Mbps', 'Mbit/s') for r in readings) for word in ('download', 'upload'))
     confirmed = required and bool(readings) and all(fresh)
+    issues = quality_issues(readings)
     return {'started_at': started, 'completed_at': finished, 'readings': readings,
-        'fresh_values_confirmed': confirmed,
+        'fresh_values_confirmed': confirmed, 'quality_issues': issues,
+        'measurement_quality': 'review' if issues else 'no issue established',
         'note': 'Measured from the service host. This is not a measurement of subscribed ISP plan speed or phone Wi-Fi speed.',
-        'limitations': [] if confirmed else ['The test request completed, but fresh timestamps were not confirmed for every value. Stored readings remain unverified.']}
+        'limitations': issues + ([] if confirmed else ['The test request completed, but fresh timestamps were not confirmed for every value. Stored readings remain unverified.'])}

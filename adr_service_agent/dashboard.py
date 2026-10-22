@@ -172,7 +172,7 @@ def cards(report, names=SYSTEMS):
 
 GROUPS = (('power', 'Power', ('WattBox', 'Sense')),
     ('network', 'Network', ('UniFi', 'Araknis', 'Ruckus')),
-    ('av', 'AV & Automation', ('Sonos', 'Bluesound', 'Crestron', 'CP4-R', 'Control4')))
+    ('av', 'AV/Automation', ('Sonos', 'Bluesound', 'Crestron', 'CP4-R', 'Control4')))
 
 
 def grouped_cards(report):
@@ -185,10 +185,10 @@ def grouped_cards(report):
         review = sum(checks.get(name, {}).get('status') == 'review' for name in names)
         read = sum(checks.get(name, {}).get('status') == 'verified' for name in names)
         status = str(review) + ' review' if review else str(read) + ' read' if read else 'Not checked'
-        output += '<label class="category-tile category-' + key + '" for="view-' + key + '"><span>' + icon(key if key != 'av' else 'av') + '</span><strong>' + ('AV / Auto' if key == 'av' else title) + '</strong><small>' + status + '</small></label>'
+        output += '<label class="category-tile category-' + key + '" for="view-' + key + '"><span>' + icon(key if key != 'av' else 'av') + '</span><strong>' + ('AV/Automation' if key == 'av' else title) + '</strong><small>' + status + '</small></label>'
     output += '</div><nav class="group-tabs" aria-label="System views">'
     for key, title in [('all', 'Overview')] + [(k, t) for k, t, _ in GROUPS]:
-        output += '<label for="view-' + key + '" aria-label="' + title + '">' + icon('home' if key == 'all' else key) + '<span>' + ('AV / Auto' if key == 'av' else title) + '</span></label>'
+        output += '<label for="view-' + key + '" aria-label="' + title + '">' + icon('home' if key == 'all' else key) + '<span>' + ('AV/Automation' if key == 'av' else title) + '</span></label>'
     output += '</nav>'
     for key, title, names in GROUPS:
         output += '<div class="system-group group-' + key + '"><div class="section-label"><h2>' + title + '</h2></div>'

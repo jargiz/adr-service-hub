@@ -1,6 +1,6 @@
 # ADR Service Hub pilot
 
-Version 0.18.1 is a local Home Assistant app for a single WattBox test device,
+Version 0.19.0 (draft) is a local Home Assistant app for a single WattBox test device,
 read-only Sonos diagnostics, Ruckus integration/presence diagnostics and UniFi
 sensor diagnostics, Sense energy/voltage with existing HA history, and direct
 Araknis SSH login/help inspection.
@@ -575,9 +575,57 @@ A fixed, hash-authorized script saves only that category in session storage and
 makes no network or device requests. If storage is unavailable, navigation still
 works, but refresh returns to Overview.
 
-## Mobile navigation (0.18.1)
+## Mobile navigation (0.19.0)
 
 Phone navigation remains outside the scrolling dashboard sections and tracks the
 visible viewport in the embedded app. Add observation and the Test Apple TV card
 are removed. Existing saved notes remain readable; WattBox identity approval
 remains under Connections.
+
+## Draft dashboard changes (0.19.0, not published)
+
+Automatic display refresh now reads the page in the background rather than
+navigating. Existing details and category selections remain in place. Changed
+values are patched without replacing the page. Form editing and power approval
+pause updates. Fetch failures retain the current page; a software change requires
+reopening the app. Background GETs never start checks or power actions.
+
+WattBox controls require `allow_outlet_control: true`, separately from the legacy
+single-outlet pilot's `allow_reboot`. Each On/Off/Restart request reads labels and
+states, then asks for confirmation naming the outlet and equipment. Execution
+checks the same pinned target and fresh mapping again. Off and Restart can cut
+network access. Device-enforced outlet modes remain authoritative. A timeout is
+never retried automatically; acknowledgement alone does not establish recovery.
+
+UniFi speed results require these app Configuration fields:
+- `unifi_gateway_host`: local UniFi OS gateway hostname/IP, without a URL prefix.
+- `unifi_gateway_port`: HTTPS port, normally 443.
+- `unifi_gateway_api_key`: local Network Integration API key (password field).
+- `unifi_gateway_site`: internal site reference, normally `default`.
+- `unifi_gateway_wan`: primary `WAN` (secondary WAN reads are explicitly selected;
+  scheduled tests currently support primary WAN only).
+
+Create the key through the local Network application, then use Connections →
+UniFi gateway → Inspect gateway certificate. Independently compare the fingerprint
+before approving. The key is sent only after that certificate matches. Read-only
+speed results use the controller dashboard endpoint; test execution sends one
+`speedtest` command and polls for a newer result. Firmware API compatibility must
+be checked against the installed gateway. No alternative endpoint is guessed and
+no failed request starts a second test. Scheduled testing uses the existing
+six-hour schedule once the gateway connection is configured. Speedtest.net is no
+longer a display fallback. Speed history retains up to seven days, latency up to
+24 hours, bounded to 512 points per series. Only real samples are graphed; the
+reported test timestamp is shown, even when an old test is read again.
+
+Ruckus: Read Access Points, compare the listed APs with the controller dashboard,
+then use Connections → Ruckus connection → Verify AP status if every listed AP is
+Online. The mapping is explicit and bound to that pinned controller; missing
+counts are never zero and other unknown numeric codes remain unverified. This
+setup does not infer Offline from a failed read.
+
+Primary API references reviewed:
+- UniFi gateway source: https://github.com/biofects/HA-Unifi-Speedtest/blob/main/custom_components/ha_unifi_speedtest/api.py
+- WattBox protocol: https://www.snapav.com/wcsstore/ExtendedSitesCatalogAssetStore/attachments/documents/PowerManagement/SupportDocuments/SnapAV_Wattbox_API_V2.2.pdf
+
+This branch is a draft. Live gateway access, actual outlet switching and Ruckus
+status calibration were not performed from the development environment.

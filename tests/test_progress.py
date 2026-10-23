@@ -28,12 +28,12 @@ class ProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root/'options.json').write_text('{}')
             pilot = Pilot(root, root/'options.json')
-            self.assertNotIn('http-equiv="refresh"', page(pilot))
+            self.assertNotIn('<meta name="adr-refresh"', page(pilot))
             pilot.service_running = True
             pilot.service_progress = 'Checking Sense'
             pilot.service_steps = {'WattBox': 'verified', 'Sense': 'checking'}
             rendered = page(pilot)
-            self.assertIn('<meta http-equiv="refresh" content="3;url=./">', rendered)
+            self.assertIn('<meta name="adr-refresh" content="3">', rendered)
             self.assertIn('1 of 2 checks finished', rendered)
             self.assertIn('Checking Sense', rendered)
             self.assertIn('value="1"', rendered)
@@ -44,14 +44,14 @@ class ProgressTests(unittest.TestCase):
             pilot.service_report, _ = run_checks([('WattBox', 'a', lambda: {'outlets': []}),
                 ('Sense', 'b', lambda: {'entries': [], 'readings': []})], {})
             rendered = page(pilot)
-            self.assertNotIn('http-equiv="refresh"', rendered)
+            self.assertNotIn('<meta name="adr-refresh"', rendered)
             self.assertIn('Check complete', rendered)
             self.assertIn('2 of 2 checks finished', rendered)
             self.assertIn('Unverified', rendered)
             pilot.service_report = None
             pilot.service_error = 'Stopped'
             self.assertIn('Checks stopped', page(pilot))
-            self.assertNotIn('http-equiv="refresh"', page(pilot))
+            self.assertNotIn('<meta name="adr-refresh"', page(pilot))
 
     def test_refresh_get_never_starts_or_restarts_device_checks(self):
         with tempfile.TemporaryDirectory() as directory:

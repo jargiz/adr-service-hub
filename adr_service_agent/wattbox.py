@@ -134,14 +134,19 @@ class WattBox:
             ("Model", "Firmware", "OutletCount", "OutletName", "OutletStatus")))
 
     def reset(self, outlet):
+        return self.set_power(outlet, "RESET")
+
+    def set_power(self, outlet, action):
         if type(outlet) is not int or not 1 <= outlet <= 18:
             raise ValueError("Only one explicit outlet from 1 to 18 is permitted")
+        if action not in ("ON", "OFF", "RESET"):
+            raise ValueError("Unsupported outlet action")
         # Drain complete buffered lines so an unrelated old OK cannot acknowledge
         # the reset. All inventory queries have completed before this call.
         self.buffer = b""
         while self.channel.recv_ready():
             self.channel.recv(4096)
-        self.channel.sendall(f"!OutletSet={outlet},RESET\n".encode("ascii"))
+        self.channel.sendall(f"!OutletSet={outlet},{action}\n".encode("ascii"))
         deadline = time.monotonic() + 8
         while True:
             line = self._line(deadline)

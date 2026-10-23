@@ -1,3 +1,24 @@
+# 0.19.0 (draft, not published)
+
+- Replace timed whole-page reloads with hash-authorized same-origin background
+  GET updates. Preserve the selected category, existing expanded details and
+  scroll anchor; pause updates while editing forms or confirming power actions.
+- Add WB-800 per-outlet On, Off and Restart controls with a separate opt-in,
+  fresh inventory/label/SSH identity checks, expiring single-use confirmation,
+  persistent cooldown and no automatic command retries.
+- Replace displayed Speedtest.net readings with a direct pinned-HTTPS UniFi
+  gateway connection. Require a local Network API key, explicit site/WAN and
+  certificate approval. No source fallback or invented measurements.
+- Add bounded persistent speed-test and gateway-latency graphs, keeping test
+  timestamps distinct from collection time and separating gateway identities.
+- Add an explicit Ruckus Online-code verification step tied to the pinned
+  controller. Unknown numeric codes remain unknown until verified against its UI.
+- Validation: 201 automated tests; browser checks for in-place refresh, scroll,
+  expansion, no background POSTs, failed-read retention and responsive layout.
+- Installation checks still required: local gateway API compatibility, a real
+  gateway result and scheduling; Ruckus code verification; actual outlet controls.
+  No household power commands or live network tests were sent by this draft.
+
 # 0.18.1
 
 - Keep phone navigation at the visible bottom while scrolling, including ingress frames.

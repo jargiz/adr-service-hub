@@ -106,7 +106,7 @@ def history_chart(series):
     previous = None
     for stamp, value in parsed:
         # Do not draw across explicit unavailable states or long sampling gaps.
-        if value is None or (previous is not None and stamp - previous > 900):
+        if value is None or (previous is not None and stamp - previous > min(86400, max(900, int(series.get('max_gap_seconds', 900))))):
             if active: segments.append(active)
             active = []
         if value is not None:
@@ -131,7 +131,8 @@ def history_chart(series):
         zone = timezone.utc
     first = datetime.fromtimestamp(xmin, zone)
     last = datetime.fromtimestamp(xmax, zone)
-    start, end = first.strftime('%H:%M'), last.strftime('%H:%M')
+    format_time = '%m/%d %H:%M' if first.date() != last.date() else '%H:%M'
+    start, end = first.strftime(format_time), last.strftime(format_time)
     output += '<text x="38" y="122">' + start + '</text><text x="288" y="122" text-anchor="end">' + end + '</text></svg>'
     output += '<small>Range ' + f'{low:g}–{high:g} ' + unit + ' · ' + str(len(valid)) + ' samples · ' + last.strftime('%Z') + (' · partial history' if series.get('truncated') else '') + '</small></div>'
     return output
@@ -174,7 +175,18 @@ def network_panels(checks):
         for label, value in latency[:8]:
             output += '<div class="latency-bar-row"><span>' + esc(label) + '</span><div class="latency-bar-track"><span style="width:' + str(value / ceiling * 100) + '%"></span></div><strong>' + f'{value:g} ms' + '</strong></div>'
         output += '</div>'
-    output += '</section><h3 class="ap-heading">Access points</h3><div class="ap-grid">'
+    if uni.get('internet_error'):
+        output += '<p class="measurement-warning">' + esc(uni['internet_error']) + '</p>'
+    if uni.get('gateway_speedtest', {}).get('readings'):
+        output += '<p class="report-caption">UniFi gateway · Tested ' + esc(uni['gateway_speedtest']['readings'][0]['last_updated']) + '</p>'
+    output += '<div class="network-history-grid">'
+    history = list(uni.get('network_history', []))
+    for name in ('UniFi speed test Download', 'UniFi speed test Upload'):
+        if not any(series.get('name')==name for series in history):
+            history.insert(0, {'name':name,'unit':'Mbit/s','points':[],'status':'Awaiting UniFi gateway results'})
+    for series in history[:8]:
+        output += history_chart(series)
+    output += '</div></section><h3 class="ap-heading">Access points</h3><div class="ap-grid">' 
 
     controller = ruckus.get('controller')
     if controller is not None:

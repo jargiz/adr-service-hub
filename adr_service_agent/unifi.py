@@ -123,12 +123,6 @@ def collect_dashboard(entry_id='', device_id='', token=None):
     token = token if token is not None else token_value()
     result = collect(entry_id, device_id, token=token)
     result['internet_readings'] = []
-    result['limitations'] = ['ISP plan speed is not configured. Only existing gateway/Speedtest HA readings are displayed; no speed tests are triggered.']
-    try:
-        result['internet_readings'] = speedtest_readings(token)
-    except Exception:
-        result['limitations'].append('Existing Speedtest HA readings could not be inspected; gateway readings remain separate.')
-    result['internet_quality_issues'] = quality_issues(result['internet_readings'])
-    if not result['internet_readings']:
-        result['limitations'].append('No enabled Speedtest readings received. ISP download/upload test results remain unverified.')
+    result['internet_quality_issues'] = []
+    result['limitations'] = ['Gateway speed-test results require the direct UniFi gateway connection.']
     return result

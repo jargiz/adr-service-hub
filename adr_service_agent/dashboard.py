@@ -118,7 +118,7 @@ def tile_value(name, snapshot, lines):
     return lines[0] if lines else 'No readings'
 
 
-def cards(report, names=SYSTEMS):
+def cards(report, names=SYSTEMS, outlet_controls=""):
     esc = lambda x: html.escape(str(x), quote=True)
     checks = {c['system']: c for c in (report or {}).get('checks', [])}
     output = '<div class="system-grid">'
@@ -147,6 +147,7 @@ def cards(report, names=SYSTEMS):
             output += '<p class="empty-state">Not checked yet.</p></div></details></article>'
             continue
         output += visuals(name, snapshot, lines)
+        if name == 'WattBox': output += outlet_controls
         if lines:
             output += '<div class="metrics">'
             for index, line in enumerate(lines):
@@ -175,7 +176,7 @@ GROUPS = (('power', 'Power', ('WattBox', 'Sense')),
     ('av', 'AV/Automation', ('Sonos', 'Bluesound', 'Crestron', 'CP4-R', 'Control4')))
 
 
-def grouped_cards(report):
+def grouped_cards(report, outlet_controls=""):
     checks = {c['system']: c for c in (report or {}).get('checks', [])}
     output = '<div class="dashboard-groups" id="systems">'
     for key, title in [('all', 'Overview')] + [(k, t) for k, t, _ in GROUPS]:
@@ -193,5 +194,5 @@ def grouped_cards(report):
     for key, title, names in GROUPS:
         output += '<div class="system-group group-' + key + '"><div class="section-label"><h2>' + title + '</h2></div>'
         if key == 'network': output += network_panels(checks)
-        output += cards(report, names) + '</div>'
+        output += cards(report, names, outlet_controls=outlet_controls) + '</div>'
     return output + '</div>'

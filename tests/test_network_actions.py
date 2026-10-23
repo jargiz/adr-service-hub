@@ -149,17 +149,17 @@ class PilotNetworkTests(unittest.TestCase):
 
     def test_no_startup_calls_duplicate_guard_auto_refresh_and_finish(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch('agent.run_internet_test') as run,patch('agent.collect_controller') as collect:
+            with patch('agent.run_gateway_test') as run,patch('agent.collect_controller') as collect:
                 pilot=self.pilot(Path(directory));run.assert_not_called();collect.assert_not_called()
             with patch('agent.threading.Thread') as thread:
                 pilot.start_network_job('internet_test')
                 with self.assertRaises(Exception): pilot.start_network_job('internet_test')
-                self.assertIn('http-equiv="refresh"',page(pilot))
+                self.assertIn('<meta name="adr-refresh"',page(pilot))
                 job=thread.call_args.kwargs['target']
-            with patch('agent.run_internet_test',side_effect=internet_test.InternetTestError('Test failed')) as run:
+            with patch('agent.run_gateway_test',side_effect=internet_test.InternetTestError('Test failed')) as run:
                 job();run.assert_called_once()
             self.assertFalse(pilot.internet_test_running)
-            self.assertNotIn('http-equiv="refresh"',page(pilot))
+            self.assertNotIn('<meta name="adr-refresh"',page(pilot))
             self.assertIn('Test failed',page(pilot))
 
     def test_certificate_approval_bound_to_target_expiry_and_permissions(self):
@@ -176,7 +176,7 @@ class PilotNetworkTests(unittest.TestCase):
             self.assertEqual(pilot.controller_pin['sha256'],'a'*64)
 
     def test_network_actions_require_ingress_and_csrf(self):
-        for action in ('internet-speedtest','controller-read','controller-identity','controller-trust'):
+        for action in ('internet-speedtest','controller-read','controller-identity','controller-trust','controller-confirm-online','gateway-identity','gateway-trust','outlet-prepare','outlet-confirm','outlet-cancel'):
             for csrf,addr in [('bad','172.30.32.2'),('ok','192.0.2.1')]:
                 h=Handler.__new__(Handler);body=('csrf='+csrf).encode()
                 h.server=SimpleNamespace(pilot=SimpleNamespace(csrf='ok',lock=threading.Lock()))

@@ -94,7 +94,7 @@ class MonitoringWiringTests(unittest.TestCase):
 
     def test_constructor_sends_nothing_and_one_daemon_starts_once(self):
         with tempfile.TemporaryDirectory() as d:
-            with patch('agent.run_internet_test') as speed,patch('agent.run_checks') as reads:
+            with patch('agent.run_gateway_test') as speed,patch('agent.run_checks') as reads:
                 pilot=self.pilot(Path(d));speed.assert_not_called();reads.assert_not_called()
                 self.assertIsNone(pilot.monitor_thread)
             with patch('agent.threading.Thread') as thread:
@@ -158,13 +158,13 @@ class MonitoringWiringTests(unittest.TestCase):
             pilot=self.pilot(Path(d));pilot.monitor_active=True
             with patch.object(pilot,'start_service_checks') as reports,patch.object(pilot,'start_network_job') as speed:
                 rendered=page(pilot)
-                self.assertIn('content="60;url=./"',rendered)
+                self.assertIn('content="60"',rendered)
                 self.assertIn('Every 20 minutes',rendered);self.assertIn('Every 6 hours',rendered)
                 self.assertNotIn('Home Assistant',rendered)
-                self.assertNotIn('http-equiv="refresh"',page(pilot,confirmation='pending'))
+                self.assertNotIn('<meta name="adr-refresh"',page(pilot,confirmation='pending'))
                 reports.assert_not_called();speed.assert_not_called()
             pilot.internet_test_running=True
-            self.assertIn('content="3;url=./"',page(pilot))
+            self.assertIn('content="3"',page(pilot))
 
 
 if __name__=='__main__':unittest.main()

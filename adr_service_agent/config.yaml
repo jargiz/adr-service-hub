@@ -1,5 +1,5 @@
 name: ADR Service Agent
-version: "0.18.1"
+version: "0.19.0"
 slug: adr_service_agent
 description: "Automatic monitoring and Internet speed tests; read-only network, Sonos, Bluesound, Sense, Control4, Crestron and CP4-R diagnostics; single-outlet WattBox pilot."
 arch:
@@ -18,6 +18,12 @@ homeassistant_api: true
 hassio_api: false
 host_network: false
 options:
+  allow_outlet_control: false
+  unifi_gateway_host: ""
+  unifi_gateway_port: 443
+  unifi_gateway_api_key: ""
+  unifi_gateway_site: "default"
+  unifi_gateway_wan: "WAN"
   automatic_monitoring: true
   monitor_interval_minutes: 20
   automatic_speedtests: true
@@ -43,6 +49,12 @@ options:
   ruckus_controller_username: ""
   ruckus_controller_password: ""
 schema:
+  allow_outlet_control: bool?
+  unifi_gateway_host: str?
+  unifi_gateway_port: port?
+  unifi_gateway_api_key: password?
+  unifi_gateway_site: str?
+  unifi_gateway_wan: str?
   automatic_monitoring: bool?
   monitor_interval_minutes: int(5,1440)?
   automatic_speedtests: bool?

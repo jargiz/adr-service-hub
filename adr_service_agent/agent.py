@@ -7,6 +7,7 @@ import os
 import secrets
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -15,7 +16,10 @@ from service_report import run_checks, SkipCheck
 from monitoring import MonitoringSchedule
 from presentation import present_html
 from ui_icons import icon
-from internet_test import run as run_internet_test, InternetTestError
+from internet_test import InternetTestError
+from unifi_gateway import collect as collect_gateway, run as run_gateway_test, settings as gateway_settings, target as gateway_target, GatewayError
+from network_history import append as append_network_history
+from outlet_control import prepare as prepare_outlet, execute as execute_outlet
 from ruckus_controller import settings as controller_settings, inspect_certificate, collect as collect_controller, ControllerError
 from dashboard import cards, grouped_cards, SYSTEMS, display_time
 from wattbox import WattBox, ProtocolError, fingerprint, inspect_key, pin_key
@@ -30,9 +34,16 @@ from cp4 import collect as collect_cp4, settings as cp4_settings, report_payload
 from araknis import settings as araknis_settings, inspect as inspect_araknis, snapshot as araknis_snapshot, discover as discover_araknis, report_payload as araknis_report_payload, AraknisError
 
 
-# Fixed, hash-authorized presentation code; no device or network requests.
-VIEW_SCRIPT = '(() => {\n  const key = \'adr-view:\' + location.pathname;\n  const views = [\'all\', \'power\', \'network\', \'av\'];\n  try {\n    const saved = sessionStorage.getItem(key);\n    if (views.includes(saved)) {\n      const selected = document.getElementById(\'view-\' + saved);\n      if (selected) selected.checked = true;\n    }\n  } catch (_) {}\n  document.querySelectorAll(\'input[name="dashboard-view"]\').forEach(input => {\n    input.addEventListener(\'change\', () => {\n      if (input.checked) {\n        try { sessionStorage.setItem(key, input.id.slice(5)); } catch (_) {}\n      }\n    });\n  });\n  const nav = document.querySelector(\'main + .group-tabs\');\n  const pin = () => {\n    if (!nav || !matchMedia(\'(max-width:700px)\').matches) {\n      if (nav) nav.style.bottom = \'\';\n      return;\n    }\n    let bottom = window.visualViewport ? visualViewport.offsetTop + visualViewport.height : innerHeight;\n    try {\n      if (window.frameElement && window.parent !== window) {\n        const frame = window.frameElement.getBoundingClientRect();\n        const outer = window.parent.visualViewport;\n        const edge = outer ? outer.offsetTop + outer.height : window.parent.innerHeight;\n        bottom = Math.min(bottom, edge - frame.top);\n      }\n    } catch (_) {}\n    nav.style.bottom = Math.max(0, innerHeight - bottom) + \'px\';\n  };\n  addEventListener(\'resize\', pin, {passive:true});\n  addEventListener(\'scroll\', pin, {passive:true});\n  if (window.visualViewport) {\n    visualViewport.addEventListener(\'resize\', pin, {passive:true});\n    visualViewport.addEventListener(\'scroll\', pin, {passive:true});\n  }\n  try {\n    if (window.parent !== window) {\n      window.parent.addEventListener(\'scroll\', pin, {passive:true});\n      window.parent.addEventListener(\'resize\', pin, {passive:true});\n    }\n  } catch (_) {}\n  pin();\n\n})();'
+# Fixed, hash-authorized presentation code; background GETs never initiate device actions.
+VIEW_SCRIPT = Path(__file__).with_name('dashboard_live.js').read_text()
 VIEW_SCRIPT_HASH = base64.b64encode(hashlib.sha256(VIEW_SCRIPT.encode()).digest()).decode()
+
+def datetime_from_iso(value):
+    try:
+        stamp = datetime.fromisoformat(str(value).replace('Z','+00:00'))
+        return stamp.timestamp() if stamp.tzinfo else None
+    except (ValueError, TypeError): return None
+
 
 def atomic_json(path, value):
     temp = path.with_suffix(".tmp")
@@ -108,6 +119,16 @@ class Pilot:
         self.lock = threading.Lock()
         self.csrf = secrets.token_urlsafe(32)
         self.confirmations = {}
+        self.power_pending = None
+        self.gateway_candidate = None
+        self.gateway_candidates = {}
+        self.gateway_pin = {}
+        self.network_history = {}
+        for filename, attribute in (("unifi_gateway_certificate.json", "gateway_pin"), ("network_history.json", "network_history")):
+            try:
+                saved = json.loads((self.data / filename).read_text())
+                if isinstance(saved, dict): setattr(self, attribute, saved)
+            except (OSError, ValueError): pass
         self.candidates = {}
         self.result = "Ready. Automatic monitoring begins after the startup delay when enabled."
         self.inventory = None
@@ -201,7 +222,7 @@ class Pilot:
 
     def monitoring_busy(self):
         return any((self.service_running, self.internet_test_running, self.controller_running,
-            self.active, self.araknis_running, self.cp4_running, self.crestron_running,
+            bool(self.power_pending and time.monotonic()-self.power_pending["created"]<=120), self.active, self.araknis_running, self.cp4_running, self.crestron_running,
             self.control4_running, self.bluesound_running, self.sense_running)) or any(
                 time.monotonic() - item[0] <= 120 for item in self.confirmations.values())
 
@@ -230,6 +251,55 @@ class Pilot:
         except Exception:
             self.monitor_active = False
             raise
+
+    def collect_unifi_dashboard(self):
+        snapshot = collect_unifi(self.unifi_selection.get('entry_id', ''), self.unifi_selection.get('device_id', ''))
+        snapshot['internet_readings'] = []
+        snapshot['internet_quality_issues'] = []
+        snapshot['internet_source'] = 'unifi_gateway'
+        snapshot['limitations'] = ['Speed results are measured by the UniFi gateway. ISP subscription speed is not configured.']
+        history_target = hashlib.sha256(json.dumps(self.unifi_selection, sort_keys=True).encode()).hexdigest()
+        try:
+            history_target = gateway_target(gateway_settings(self.araknis_options), self.gateway_pin)
+            gateway = collect_gateway(self.araknis_options, self.gateway_pin)
+            history_target = gateway['target_id']
+            snapshot['internet_readings'] = gateway['readings']
+            snapshot['gateway_speedtest'] = gateway
+            snapshot['limitations'] += gateway['limitations']
+            speed_samples = []
+            for record in gateway['records']:
+                for label, field, unit in (('Download','download','Mbit/s'),('Upload','upload','Mbit/s'),('Ping','ping','ms')):
+                    if record[field] is not None:
+                        speed_samples.append({'name':'UniFi speed test '+label,'state':record[field],'unit':unit,'last_updated':record['time']})
+            append_network_history(self.network_history, history_target, speed_samples)
+        except GatewayError as exc:
+            snapshot['internet_error'] = str(exc)
+            snapshot['limitations'].append(str(exc))
+        # Latency is sampled at this successful gateway read, not once per state-change.
+        latency = [dict(r, last_updated=snapshot['checked_at']) for r in snapshot.get('sensors', []) if r.get('unit')=='ms' and 'latency' in r.get('name','').lower()]
+        snapshot['network_history'] = append_network_history(self.network_history, history_target, latency)
+        atomic_json(self.data / 'network_history.json', self.network_history)
+        return snapshot
+
+    def gateway_identity(self):
+        config = gateway_settings(self.araknis_options)
+        digest = inspect_certificate(config)
+        nonce = secrets.token_urlsafe(24)
+        self.gateway_candidates = {nonce: (time.monotonic(), config['host'], config['port'], digest)}
+        self.gateway_candidate = (nonce, digest)
+
+    def gateway_trust(self, nonce):
+        item = self.gateway_candidates.pop(nonce, None)
+        config = gateway_settings(self.araknis_options)
+        if not item or time.monotonic()-item[0]>120 or (config['host'],config['port'])!=item[1:3]:
+            raise ProtocolError('Gateway identity approval expired or target changed. Inspect again.')
+        pin = {'host':item[1],'port':item[2],'sha256':item[3]}
+        if self.gateway_pin and self.gateway_pin!=pin:
+            raise ProtocolError('A different gateway certificate is saved. Investigate before replacing it.')
+        self.gateway_pin=pin
+        atomic_json(self.data / 'unifi_gateway_certificate.json', pin)
+        self.gateway_candidate=None
+        self.result='UniFi gateway certificate saved. Run All Checks to read its speed results.'
 
     def service_jobs(self):
         def selected(read, selection):
@@ -271,7 +341,7 @@ class Pilot:
             ('Bluesound', 'ha-bluesound', collect_bluesound),
             ('Ruckus', (hashlib.sha256(json.dumps([self.ruckus_selection, self.araknis_options.get('ruckus_controller_host'), self.araknis_options.get('ruckus_controller_port', 443), self.controller_pin], sort_keys=True).encode()).hexdigest() if self.araknis_options.get('ruckus_controller_host') else self.ruckus_selection), ruckus_read),
             ('UniFi', json.dumps(self.unifi_selection, sort_keys=True),
-                lambda: collect_unifi(self.unifi_selection.get('entry_id', ''), self.unifi_selection.get('device_id', ''))),
+                lambda: self.collect_unifi_dashboard()),
             ('Crestron', self.crestron_selection, lambda: collect_crestron(self.crestron_selection)),
             ('Control4', self.control4_selection, lambda: collect_control4(self.control4_selection)),
             ('Araknis', target_id('araknis', 'araknis_known_hosts'),
@@ -310,6 +380,8 @@ class Pilot:
         self.result = 'Historical observation saved locally for this target. It does not suppress future findings.'
 
     def start_service_checks(self, scheduled=False):
+        if self.power_pending and time.monotonic()-self.power_pending['created']<=120:
+            raise ProtocolError('Confirm or cancel the pending outlet action first.')
         if self.service_running:
             return
         if any((self.araknis_running, self.cp4_running, self.crestron_running,
@@ -335,7 +407,7 @@ class Pilot:
             try:
                 report, baselines = run_checks(jobs, self.service_baselines, progress,
                     tuple(self.araknis_options.get(k, '') for k in
-                        ('password', 'araknis_password', 'cp4_password', 'ruckus_controller_password')), history=self.service_history, completed=completed)
+                        ('password', 'araknis_password', 'cp4_password', 'ruckus_controller_password', 'unifi_gateway_api_key')), history=self.service_history, completed=completed)
                 with self.lock:
                     self.service_steps = {check['system']: check['status'] for check in report['checks']}
                     self.service_completed = len(report['checks'])
@@ -367,13 +439,28 @@ class Pilot:
         config = controller_settings(self.araknis_options)
         if not item or time.monotonic() - item[0] > 120 or (config['host'], config['port']) != item[1:3]:
             raise ProtocolError('Controller identity approval expired or the target changed. Inspect again.')
-        if self.controller_pin and self.controller_pin != {'host': item[1], 'port': item[2], 'sha256': item[3]}:
+        if self.controller_pin and any(self.controller_pin.get(k)!=v for k,v in {'host':item[1],'port':item[2],'sha256':item[3]}.items()):
             raise ProtocolError('A different controller certificate is already saved. Investigate the change before replacing it.')
         self.controller_pin = {'host': item[1], 'port': item[2], 'sha256': item[3]}
         atomic_json(self.data / 'ruckus_controller_certificate.json', self.controller_pin)
         self.controller_candidate = None
         self.audit('ruckus_controller_identity_approved')
         self.result = 'Ruckus controller certificate saved. You can now read access point statistics.'
+
+    def confirm_controller_online(self, confirmed):
+        if not confirmed or not self.controller_result or not self.controller_pin:
+            raise ProtocolError('Read access points and compare their status in Ruckus before confirming.')
+        checked = datetime_from_iso(self.controller_result.get('checked_at'))
+        if checked is None or time.time()-checked>600:
+            raise ProtocolError('Access point snapshot expired. Read access points again.')
+        aps = self.controller_result.get('access_points', [])
+        codes = {str(ap.get('controller_state','')) for ap in aps}
+        if not aps or len(codes)!=1 or not all(code.isdigit() and len(code)<4 for code in codes):
+            raise ProtocolError('This confirmation requires a single numeric status code shared by the displayed APs.')
+        self.controller_pin['verified_online_codes'] = sorted(codes)
+        atomic_json(self.data / 'ruckus_controller_certificate.json', self.controller_pin)
+        self.result = 'Online status code saved for this pinned Ruckus controller. Run All Checks to update the AP cards.'
+        self.audit('ruckus_online_code_verified')
 
     def start_network_job(self, kind, scheduled=False):
         if kind not in ('internet_test', 'controller'):
@@ -392,8 +479,8 @@ class Pilot:
         def job():
             result, error = None, None
             try:
-                result = run_internet_test() if kind == 'internet_test' else collect_controller(config, self.controller_pin)
-            except (InternetTestError, ControllerError) as exc:
+                result = run_gateway_test(self.araknis_options, self.gateway_pin) if kind == 'internet_test' else collect_controller(config, self.controller_pin)
+            except (InternetTestError, ControllerError, GatewayError) as exc:
                 error = str(exc)
             except Exception:
                 error = 'Network check could not complete. No automatic retry was made.'
@@ -872,11 +959,11 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         return (f'<form method="post" action="{action}"><input type="hidden" name="csrf" value="{pilot.csrf}">'
             + extra + f'<button class="{"danger" if danger else ""}"{" disabled" if disabled else ""}>{esc(label)}</button></form>')
     text = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    if pilot.service_running or pilot.internet_test_running or pilot.controller_running:
-        text += '<meta http-equiv="refresh" content="3;url=./">'
-    elif pilot.monitor_active and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
-        text += '<meta http-equiv="refresh" content="60;url=./">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV/Automation</span></label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="mobile-tools"><a href="#history" aria-label="History">{icon("history")}</a><a href="#connections" aria-label="Connections">{icon("settings")}</a></div><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.18.1</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div></header>'
+    if (pilot.service_running or pilot.internet_test_running or pilot.controller_running) and not pilot.power_pending and not pilot.gateway_candidate:
+        text += '<meta name="adr-refresh" content="3">'
+    elif pilot.monitor_active and not pilot.power_pending and not pilot.gateway_candidate and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
+        text += '<meta name="adr-refresh" content="60">'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV/Automation</span></label><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="mobile-tools"><a href="#history" aria-label="History">{icon("history")}</a><a href="#connections" aria-label="Connections">{icon("settings")}</a></div><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.19.0</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div></header>'
     report = pilot.service_report
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready.'):
@@ -889,6 +976,11 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     if report:
         text += '<span class="secondary">' + form('service-report', 'Download report') + '</span>'
     text += '</div>'
+    if pilot.power_pending:
+        pending = pilot.power_pending
+        text += '<section class="power-confirmation" role="alert"><h2>Confirm outlet action</h2><p><strong>' + esc(pending['action']) + ' · Outlet ' + str(pending['number']) + ' · ' + esc(pending['label']) + '</strong></p><p>This can interrupt connected equipment or network access.</p>'
+        text += form('outlet-confirm', 'Confirm ' + pending['action'], '<input type="hidden" name="nonce" value="' + esc(pending['nonce']) + '"><label><input type="checkbox" name="confirm" value="yes" required> Confirm this equipment and action</label>', danger=pending['action']!='ON')
+        text += form('outlet-cancel', 'Cancel') + '</section>'
     progress_markup = service_progress_panel(pilot)
     network_tools = ''
     network_tools += '<details class="network-actions"' + (' open' if pilot.internet_test_running or pilot.internet_test or pilot.internet_test_error or pilot.controller_running or pilot.controller_result or pilot.controller_error else '') + '><summary>Network tools</summary><p class="tool-note">Speed tests use connection bandwidth.</p>'
@@ -927,7 +1019,20 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     elif progress_markup:
         text += '<details class="run-history"><summary>Check history</summary>' + progress_markup + '</details>'
     if report or not pilot.service_running:
-        text += grouped_cards(report)
+        outlet_markup = ''
+        wb_check = next((c for c in (report or {}).get('checks', []) if c.get('system')=='WattBox'), {})
+        wb_snapshot = wb_check.get('snapshot') or {}
+        if wb_snapshot.get('power_action_pending_read'):
+            outlet_markup += '<p class="measurement-warning">Power action accepted. Read outlets again for current power states.</p>'
+        for outlet in wb_snapshot.get('outlets', []):
+            if type(outlet.get('number')) is not int or not 1<=outlet['number']<=18: continue
+            outlet_markup += '<div class="outlet-row"><div><strong>' + str(outlet['number']) + ' · ' + esc(outlet.get('label','Outlet')) + '</strong><small>' + ('Awaiting read' if wb_snapshot.get('power_action_pending_read') else 'On' if outlet.get('on') is True else 'Off' if outlet.get('on') is False else 'Unknown') + '</small></div><div class="outlet-actions">'
+            for action, label in (('ON','On'),('OFF','Off'),('RESET','Restart')):
+                outlet_markup += form('outlet-prepare', label, '<input type="hidden" name="outlet" value="' + str(outlet['number']) + '"><input type="hidden" name="operation" value="' + action + '">', danger=action!='ON', disabled=pilot.araknis_options.get('allow_outlet_control') is not True)
+            outlet_markup += '</div></div>'
+        if pilot.araknis_options.get('allow_outlet_control') is not True:
+            outlet_markup += '<p class="report-caption">Enable allow_outlet_control in Configuration to use outlet controls.</p>'
+        text += grouped_cards(report, outlet_controls=outlet_markup)
     text += monitoring_panel(pilot) + network_tools
     text += '</section>'
     if pilot.service_history:
@@ -936,13 +1041,26 @@ def page(pilot, confirmation=None, candidate=None, error=None):
             text += '<p>' + esc(item['system']) + ' · ' + esc(item['subject']) + ': ' + esc(item['note']) + '</p>'
         text += '</details>'
     controller_setup_needed = bool(report and any(c.get('system') == 'Ruckus' and (c.get('snapshot') or {}).get('controller_error') == 'Inspect and approve this Ruckus controller certificate first.' for c in report.get('checks', [])))
-    individual_open = any((controller_setup_needed, confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
+    individual_open = any((controller_setup_needed, pilot.gateway_candidate, confirmation, candidate, error, pilot.araknis_candidate, pilot.cp4_candidate,
         pilot.araknis_running, pilot.cp4_running, pilot.crestron_running, pilot.control4_running,
         pilot.controller_candidate, pilot.controller_error, pilot.sense_running, pilot.sense, pilot.bluesound_running, pilot.araknis_diagnostics, pilot.cp4, pilot.crestron, pilot.control4,
         pilot.bluesound, pilot.sonos, pilot.ruckus, pilot.unifi, pilot.inventory))
     text += '<details class="individual-checks" id="connections"' + (' open' if individual_open else '') + '><summary>Connections</summary>'
+    text += '<section><h2>UniFi gateway</h2><details class="setup-help"><summary>Setup</summary><p>Set unifi_gateway_host and unifi_gateway_api_key in Configuration. Create a local Network API key at Settings → Control Plane → Integrations. Use the primary WAN.</p></details>'
+    text += form('gateway-identity', 'Inspect gateway certificate')
+    if pilot.gateway_candidate:
+        nonce, digest = pilot.gateway_candidate
+        text += '<p>Compare this fingerprint with the gateway using a trusted local connection: <code>' + esc(digest) + '</code></p>'
+        text += form('gateway-trust', 'Approve gateway certificate', '<input type="hidden" name="nonce" value="' + esc(nonce) + '">')
+    text += '</section>'
     text += '<section><h2>Ruckus connection</h2><details class="setup-help"><summary>Setup</summary><p>Set the controller address, HTTPS port and login in app Configuration. Use the Unleashed management address.</p></details>'
     text += form('controller-identity', 'Inspect Controller Certificate')
+    if pilot.controller_result and any(ap.get('online') is None for ap in pilot.controller_result.get('access_points', [])):
+        text += '<details class="setup-help"><summary>Verify AP status</summary><p>Compare these APs with the Ruckus dashboard before saving the controller status code.</p>'
+        for ap in pilot.controller_result.get('access_points', []):
+            text += '<p>' + esc(ap['name']) + ' · code ' + esc(ap.get('controller_state','')) + '</p>'
+        text += form('controller-confirm-online', 'Save Online status mapping', '<label><input type="checkbox" name="confirm" value="yes" required> I verified every AP listed above is Online in the Ruckus dashboard.</label>') + '</details>'
+
     if pilot.controller_candidate:
         nonce, digest = pilot.controller_candidate
         text += '<p>Certificate SHA-256: <code>' + esc(digest) + '</code></p><p>Compare this fingerprint using a trusted connection to your controller before approving.</p>'
@@ -1332,7 +1450,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-" + VIEW_SCRIPT_HASH + "'; form-action 'self'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'none'; connect-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-" + VIEW_SCRIPT_HASH + "'; form-action 'self'; base-uri 'none'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1476,11 +1594,31 @@ class Handler(BaseHTTPRequestHandler):
         action = urlsplit(self.path).path.strip('/')
         with pilot.lock:
             try:
+                pending = getattr(pilot, 'power_pending', None)
+                if pending and time.monotonic()-pending['created']<=120 and action not in ('outlet-confirm','outlet-cancel','refresh','service-report'):
+                    raise ProtocolError('Confirm or cancel the pending outlet action first.')
                 if (getattr(pilot, 'internet_test_running', False) or getattr(pilot, 'controller_running', False)) and action not in ('refresh', 'service-report'):
                     raise ProtocolError('A network check is running. Wait for automatic results before another action.')
                 if getattr(pilot, 'service_running', False) and action not in ('refresh', 'service-check', 'service-report'):
                     raise ProtocolError('Combined checks are running. Refresh results or wait for completion before another action.')
-                if action == 'service-check':
+                if action == 'outlet-prepare':
+                    try: number = int(params.get('outlet',[''])[0])
+                    except ValueError: raise ProtocolError('Invalid outlet.') from None
+                    prepare_outlet(pilot, number, params.get('operation',[''])[0])
+                    self.send_page()
+                elif action == 'outlet-confirm':
+                    execute_outlet(pilot, params.get('nonce',[''])[0], params.get('confirm',[''])[0]=='yes', atomic_json)
+                    self.send_page()
+                elif action == 'outlet-cancel':
+                    pilot.power_pending = None
+                    self.send_page()
+                elif action == 'gateway-identity':
+                    pilot.gateway_identity()
+                    self.send_page()
+                elif action == 'gateway-trust':
+                    pilot.gateway_trust(params.get('nonce',[''])[0])
+                    self.send_page()
+                elif action == 'service-check':
                     pilot.start_service_checks()
                     self.send_page()
                 elif action == 'service-history':
@@ -1490,6 +1628,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_service_report()
                 elif action == 'internet-speedtest':
                     pilot.start_network_job('internet_test')
+                    self.send_page()
+                elif action == 'controller-confirm-online':
+                    pilot.confirm_controller_online(params.get('confirm',[''])[0]=='yes')
                     self.send_page()
                 elif action == 'controller-read':
                     pilot.start_network_job('controller')
@@ -1589,7 +1730,7 @@ def main():
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
     server.pilot = Pilot('/data', '/data/options.json')
     server.pilot.start_monitoring()
-    print('ADR Service Agent 0.18.1 ready. Local monitoring uses configured intervals; no automatic power actions.')
+    print('ADR Service Agent 0.19.0 ready. Local monitoring uses configured intervals; no automatic power actions.')
     try:
         server.serve_forever()
     finally:

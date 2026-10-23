@@ -191,7 +191,7 @@ def compare(current, previous):
 
 
 def run_checks(jobs, baselines, progress=lambda *_: None, secrets=(), history=(), completed=lambda *_: None):
-    report = {'format': 'adr-service-report-v1', 'agent_version': '0.18.1', 'read_only': True,
+    report = {'format': 'adr-service-report-v1', 'agent_version': '0.19.0', 'read_only': True,
         'started_at': now(), 'completed_at': None, 'checks': [],
         'limitations': ['Verified means the specified read succeeded, not that every device function is healthy.',
             'Checks run sequentially; per-check timestamps differ. No automatic retries or device actions.',

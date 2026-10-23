@@ -144,6 +144,13 @@ def collect(config, pin):
     if pin.get('host') != config['host'] or pin.get('port') != config['port'] or not re.fullmatch(r'[a-f0-9]{64}', str(pin.get('sha256', ''))):
         raise ControllerError('Inspect and approve this Ruckus controller certificate first.')
     try:
-        return asyncio.run(asyncio.wait_for(_read(config, pin['sha256']), timeout=40))
+        result = asyncio.run(asyncio.wait_for(_read(config, pin['sha256']), timeout=40))
+        verified = pin.get('verified_online_codes', [])
+        if isinstance(verified, list):
+            for ap in result['access_points']:
+                if ap.get('controller_state') in verified:
+                    ap['online'] = True
+                    ap['status_basis'] = 'Controller code verified against the local Ruckus dashboard'
+        return result
     except Exception:
         raise ControllerError('Ruckus controller read failed. Check the controller address, credentials and approved certificate. No configuration commands were sent.') from None

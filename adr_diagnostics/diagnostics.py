@@ -30,15 +30,17 @@ def config(raw):
     networks=[]
     try:
         for item in subnets:
-            n=ipaddress.ip_network(item,strict=True)
+            if not isinstance(item,str):raise ValueError()
+            n=ipaddress.ip_network(item.strip(),strict=True)
             if n.version!=4 or n.prefixlen<24 or not any(n.subnet_of(r) for r in RFC1918):
                 raise ValueError()
             networks.append(n)
     except (ValueError,TypeError):
-        raise DiagnosticError('Use private IPv4 subnets of /24 or smaller.') from None
+        raise DiagnosticError('allowed_subnets: enter a private IPv4 network such as 192.168.50.0/24, with /24 or smaller scope.') from None
     c={'networks':networks}
     c['targets']=list(dict.fromkeys(address(t,c) for t in targets))
     name=raw.get('dns_name','example.com')
+    if isinstance(name,str):name=name.strip()
     if not isinstance(name,str) or len(name)>253 or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?',name):
         raise DiagnosticError('Set a valid DNS test name.')
     interval=raw.get('monitor_interval_minutes',20)
@@ -50,12 +52,13 @@ def config(raw):
 
 def address(value, c):
     try:
-        a=ipaddress.ip_address(value)
+        if not isinstance(value,str):raise ValueError()
+        a=ipaddress.ip_address(value.strip())
         if a.version!=4 or not any(a in n and a not in (n.network_address,n.broadcast_address) for n in c['networks']):
             raise ValueError()
         return str(a)
     except (ValueError,TypeError):
-        raise DiagnosticError('Choose a host address inside a configured local subnet.') from None
+        raise DiagnosticError('targets: each entry must contain only an IPv4 host address inside allowed_subnets. Add each address separately; do not include device names or commas.') from None
 
 
 def ping(ip, count=3, runner=subprocess.run):

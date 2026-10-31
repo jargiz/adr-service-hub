@@ -1,5 +1,5 @@
 name: ADR Diagnostics Preview
-version: "0.1.0"
+version: "0.1.1"
 slug: adr_diagnostics
 description: "Local network diagnostics, observed-device history and optional Ask ADR analysis."
 arch:

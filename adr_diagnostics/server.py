@@ -22,7 +22,9 @@ SCRIPT_HASH=base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
 def load(path, limit=2*1024*1024):
     if not path.exists():return {}
     if path.stat().st_size>limit:raise DiagnosticError('Saved diagnostic data exceeds its limit.')
-    result=json.loads(path.read_text())
+    try:result=json.loads(path.read_text())
+    except (OSError,ValueError):
+        raise DiagnosticError('Could not read saved '+path.name+'. Check this file locally; no data was removed.') from None
     if not isinstance(result,dict):raise DiagnosticError('Saved diagnostic data is invalid.')
     return result
 
@@ -108,6 +110,38 @@ class State:
                 except DiagnosticError:pass
 
 
+class SetupNeeded:
+    """Serve a usable setup notice; never run tools on invalid configuration."""
+    def __init__(self,message):
+        self.settings={'networks':[]}
+        self.csrf=secrets.token_urlsafe(32)
+        self.stop=threading.Event()
+        self.message=message
+
+    def status(self):
+        return {'busy':False,'blocked':True,'progress':'Setup needed: '+self.message,
+            'result':{},'answer':'','summary':'Correct Configuration, save and restart ADR Diagnostics Preview.',
+            'observed':[],'imported':False,'cloud_enabled':False,
+            'peak_memory_mb':round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,1)}
+
+    def start(self,*_):
+        raise DiagnosticError('Setup needed: '+self.message)
+
+    def monitor(self):pass
+
+
+def startup(data='/data', options_path='/data/options.json'):
+    try:
+        return State(data,load(Path(options_path),65536))
+    except DiagnosticError as exc:
+        # Only application-authored validation text; never print raw exception data.
+        return SetupNeeded(str(exc))
+    except OSError:
+        return SetupNeeded('The app could not access its private data directory. Check app storage permissions.')
+    except Exception:
+        return SetupNeeded('Saved diagnostic data has an unexpected format. Inspect the app data locally; no data was removed.')
+
+
 def page(state):
     esc=lambda s:html.escape(str(s),quote=True)
     subnets=''.join('<option value="'+esc(n)+'">'+esc(n)+'</option>' for n in state.settings['networks'])
@@ -160,13 +194,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    options=load(Path('/data/options.json'),65536)
-    try:state=State('/data',options)
-    except Exception:
-        raise SystemExit('ADR Diagnostics configuration or saved data is invalid; inspect locally.') from None
+    state=startup()
     server=ThreadingHTTPServer(('0.0.0.0',8099),Handler);server.state=state
     threading.Thread(target=state.monitor,daemon=True).start()
-    print('ADR Diagnostics Preview 0.1.0 ready. Checks are bounded; cloud analysis is on request only.')
+    print('ADR Diagnostics Preview 0.1.1 ready. Checks are bounded; cloud analysis is on request only.')
+    if isinstance(state,SetupNeeded):print('Setup needed: '+state.message)
     try:server.serve_forever()
     finally:state.stop.set();server.server_close()
 

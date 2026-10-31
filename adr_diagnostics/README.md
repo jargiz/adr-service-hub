@@ -1,6 +1,6 @@
 # ADR Diagnostics Preview
 
-Version 0.1.0 is a separate, experimental app for Home Assistant Green and amd64
+Version 0.1.1 is a separate, experimental app for Home Assistant Green and amd64
 systems. It does not replace ADR Service Agent. Nothing is deployed by adding
 these source files to a draft branch.
 
@@ -106,7 +106,7 @@ default AppArmor stays enabled.
 
 ## Verification
 
-231 offline unit tests pass across both apps (24 new prototype tests), covering
+236 offline unit tests pass across both apps (29 prototype tests), covering
 target/subnet scope, subprocess arguments/timeouts, absent ICMP handling,
 read-only TCP, retention, private writes, report sanitization, AI opt-in and
 no-retry behavior, quotas, ingress, CSRF, and script hashing. Tests use mocked

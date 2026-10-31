@@ -37,6 +37,17 @@ class Tools(unittest.TestCase):
         for options in (dict(self.options(),targets=['192.168.50.10']*17),dict(self.options(),dns_name='bad\nname'),dict(self.options(),monitor_interval_minutes=True)):
             with self.assertRaises(diag.DiagnosticError):diag.config(options)
 
+    def test_surrounding_whitespace_is_normalized(self):
+        c=diag.config({'allowed_subnets':[' 192.168.50.0/24 '],
+            'targets':[' 192.168.50.1\n'],'dns_name':' example.com '})
+        self.assertEqual(c['targets'],['192.168.50.1'])
+        self.assertEqual(c['dns_name'],'example.com')
+
+    def test_joined_addresses_have_actionable_error(self):
+        with self.assertRaises(diag.DiagnosticError) as error:
+            diag.config(dict(self.options(),targets=['192.168.50.1,192.168.50.2']))
+        self.assertIn('Add each address separately',str(error.exception))
+
     def test_ping_fixed_args_and_short_sample(self):
         runner=Mock(return_value=SimpleNamespace(stdout='3 packets transmitted, 2 received, 33% packet loss\nrtt min/avg/max/mdev = 1.0/2.0/3.0/1.0 ms',returncode=0))
         r=diag.ping('192.168.50.10',runner=runner)
@@ -154,6 +165,32 @@ class App(unittest.TestCase):
     def test_startup_has_no_checks_or_model_calls(self):
         with patch.object(green,'check') as check,patch.object(green,'ask') as ask:
             self.state.monitor();self.assertFalse(self.state.busy);check.assert_not_called();ask.assert_not_called()
+
+    def test_invalid_config_serves_setup_page_without_work(self):
+        path=Path(self.temp.name)/'options.json'
+        path.write_text(json.dumps({'allowed_subnets':[],'targets':['192.168.50.1'],'openai_api_key':'private-never-log'}))
+        state=green.startup(self.temp.name,path)
+        self.assertIsInstance(state,green.SetupNeeded)
+        self.assertTrue(state.status()['blocked'])
+        self.assertIn('targets:',state.status()['progress'])
+        self.assertNotIn('private-never-log',json.dumps(state.status()))
+        self.assertIn('Network diagnostics',green.page(state))
+        with self.assertRaises(diag.DiagnosticError):state.start('check',{})
+
+    def test_bad_saved_json_produces_safe_notice_without_deleting(self):
+        path=Path(self.temp.name)/'options.json';path.write_text('{}')
+        saved=Path(self.temp.name)/'history.json';saved.write_text('{private-never-log')
+        state=green.startup(self.temp.name,path)
+        self.assertIsInstance(state,green.SetupNeeded)
+        self.assertIn('history.json',state.message)
+        self.assertNotIn('private-never-log',state.message)
+        self.assertEqual(saved.read_text(),'{private-never-log')
+
+    def test_unexpected_startup_exception_never_prints_secret(self):
+        with patch.object(green,'State',side_effect=RuntimeError('private-never-log')):
+            state=green.startup(self.temp.name,Path(self.temp.name)/'options.json')
+        self.assertIsInstance(state,green.SetupNeeded)
+        self.assertNotIn('private-never-log',json.dumps(state.status()))
 
     def test_job_guard_and_configuration(self):
         with self.assertRaises(diag.DiagnosticError):self.state.start('check',{})

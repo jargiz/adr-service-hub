@@ -1115,6 +1115,7 @@ def finish_page(text):
         navigation = text[start:end]
         text = text[:start] + text[end:]
         text = text.replace('</main>', '</main>' + navigation, 1)
+    text = text.replace('<table', '<table tabindex="0" aria-haspopup="dialog"')
     return present_html(text).replace('</html>', '<script type="module">' + VIEW_SCRIPT + '</script></html>')
 
 

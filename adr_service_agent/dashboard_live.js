@@ -202,8 +202,50 @@
   // consent, selected category and open tiles. GETs never trigger checks.
   let diagnosticSubmitting=false;
   const diag = id => document.getElementById(id);
+  const deviceCache = new Map();
+  const unknownDeviceValue = value => ['', 'unknown', 'unverified', 'unavailable'].includes(String(value ?? '').trim().toLowerCase());
+  const macText = value => String(value ?? '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+  function deviceSelection(rows, query, sort) {
+    query = String(query || '').trim().toLowerCase();
+    const compact = macText(query), macQuery = /^[0-9a-f: .-]+$/i.test(query) && compact.length >= 4;
+    const selected = rows.filter(row => !query || row.slice(0,5).some(value => String(value ?? '').toLowerCase().includes(query)) || (macQuery && !unknownDeviceValue(row[3]) && macText(row[3]).includes(compact)));
+    const ip = value => { const parts=String(value).split('.'); return parts.length===4 && parts.every(p=>/^\d{1,3}$/.test(p)&&Number(p)<=255) ? parts.reduce((n,p)=>n*256+Number(p),0) : Infinity; };
+    const column = {manufacturer:0,hostname:2,mac:3}[sort];
+    return selected.slice().sort((a,b) => {
+      if (sort === 'ip' || column === undefined) return ip(a[1])-ip(b[1]);
+      const missing = Number(unknownDeviceValue(a[column]))-Number(unknownDeviceValue(b[column]));
+      if (missing) return missing;
+      const left=sort==='mac'?macText(a[column]):String(a[column]??'');
+      const right=sort==='mac'?macText(b[column]):String(b[column]??'');
+      return left.localeCompare(right,'en',{sensitivity:'base',numeric:true}) || ip(a[1])-ip(b[1]);
+    });
+  }
+  function redrawDeviceLists() {
+    for (const [id,rows] of deviceCache) diagnosticRows(id,rows);
+  }
+  window.ADRDeviceList = {
+    select:deviceSelection,
+    set(query,sort) {
+      const search=diag('diag-device-search'), order=diag('diag-device-sort');
+      if(search)search.value=query;if(order)order.value=sort;
+      redrawDeviceLists();
+    }
+  };
+  for (const name of ['input','change']) document.addEventListener(name,event=>{
+    if (['diag-device-search','diag-device-sort'].includes(event.target.id)) redrawDeviceLists();
+  });
   function diagnosticRows(id,rows){
     const body=diag(id);if(!body)return;
+    if (id==='diag-devices' || id==='diag-observed') {
+      deviceCache.set(id,rows);
+      const total=rows.length;
+      rows=deviceSelection(rows,diag('diag-device-search')?.value,diag('diag-device-sort')?.value || 'ip');
+      if(id==='diag-devices') {
+        const count=diag('diag-device-count'),empty=diag('diag-device-empty');
+        if(count)count.textContent=rows.length+' of '+total+' devices';
+        if(empty)empty.hidden=rows.length>0;
+      }
+    }
     const serialized=JSON.stringify(rows);if(body.dataset.rows===serialized)return;
     const fragment=document.createDocumentFragment();
     const labels=id==='diag-devices'?['Manufacturer','IP address','Hostname','MAC address','Device type','Identity source','Web interface']:[];
@@ -326,16 +368,20 @@
 
 // Chart inspection is entirely local. Never fetch data or submit device actions.
 (() => {
-  const chartSelector = 'svg.trend-chart, svg.history-chart';
+  const chartSelector = 'svg.trend-chart, svg.history-chart, .gauge svg, table';
   let viewer = null;
   function openChart(source) {
     if (viewer) return;
-    const card = source.closest('.trial-chart, .trend-card, .sense-series');
+    const isTable = source.tagName.toLowerCase() === 'table';
+    const deviceTable = isTable && source.querySelector('#diag-devices,#diag-observed');
+    const card = source.closest('.trial-chart, .trend-card, .sense-series, .gauge, section, article, details');
     const dialog = document.createElement('dialog');
     dialog.className = 'chart-viewer';
     dialog.setAttribute('aria-labelledby', 'chart-viewer-title');
     dialog.innerHTML = '<header><h2 id="chart-viewer-title"></h2><button type="button" data-chart-close aria-label="Close enlarged graph">Close</button></header><div class="chart-viewer-tools"><button type="button" data-chart-out aria-label="Zoom out">−</button><output aria-live="polite">100%</output><button type="button" data-chart-in aria-label="Zoom in">+</button><button type="button" data-chart-reset>Reset zoom</button></div><p class="chart-viewer-help">Pinch or use + / − to zoom. Drag to pan. Tap for a recorded reading; use arrow keys to step through samples.</p><div class="chart-viewer-legend"></div><div class="chart-viewer-viewport" tabindex="0" aria-label="Enlarged graph"><div class="chart-viewer-canvas"></div></div><p class="chart-viewer-detail" role="status">Showing the recorded graph at the time it was opened.</p>';
-    dialog.querySelector('h2').textContent = card?.querySelector('h4')?.textContent || source.getAttribute('aria-label') || 'History';
+    dialog.querySelector('h2').textContent = isTable ? (deviceTable ? 'Devices' : source.caption?.textContent || card?.querySelector('h2,h3,h4,summary')?.textContent || 'Table') : (card?.querySelector('h4')?.textContent || source.getAttribute('aria-label') || 'History');
+    dialog.querySelector('[data-chart-close]').setAttribute('aria-label','Close enlarged view');
+    dialog.querySelector('.chart-viewer-help').textContent='Pinch to zoom · Drag to pan';
     const legend = source.parentElement.querySelector('.trend-legend') || card?.querySelector('.trend-legend');
     if (legend) dialog.querySelector('.chart-viewer-legend').append(legend.cloneNode(true));
     const svg = source.cloneNode(true);
@@ -343,11 +389,33 @@
     svg.removeAttribute('data-trial-chart');
     svg.removeAttribute('aria-haspopup');
     svg.removeAttribute('id');
-    svg.setAttribute('role', 'img');
+    svg.querySelectorAll('[id]').forEach(node=>node.removeAttribute('id'));
+    svg.querySelectorAll('button,input,select,textarea').forEach(node=>node.disabled=true);
+    if(!isTable)svg.setAttribute('role', 'img');
+    else svg.classList.add('viewer-table');
     const viewport = dialog.querySelector('.chart-viewer-viewport');
     const canvas = dialog.querySelector('.chart-viewer-canvas');
     const detail = dialog.querySelector('.chart-viewer-detail');
     canvas.append(svg);
+    dialog.addEventListener('submit',event=>event.preventDefault());
+    if(isTable && source.querySelector('#diag-devices,#diag-observed') && window.ADRDeviceList) {
+      const original=document.querySelector('.device-list-controls');
+      if(original){
+        const controls=original.cloneNode(true);
+        controls.querySelectorAll('[id]').forEach(node=>node.removeAttribute('id'));
+        const search=controls.querySelector('input[type="search"]'),order=controls.querySelector('select');
+        search.value=original.querySelector('input[type="search"]').value;
+        order.value=original.querySelector('select').value;
+        function filter(){
+          window.ADRDeviceList.set(search.value,order.value);
+          const copy=source.cloneNode(true);
+          copy.querySelectorAll('[id]').forEach(node=>node.removeAttribute('id'));
+          svg.replaceChildren(...copy.childNodes);
+        }
+        search.addEventListener('input',filter);order.addEventListener('change',filter);
+        dialog.querySelector('.chart-viewer-legend').before(controls);
+      }
+    }
     document.body.append(dialog);
     viewer = dialog;
     const oldOverflow = document.body.style.overflow;
@@ -359,7 +427,8 @@
       if (source.isConnected) source.focus({preventScroll:true});
     });
     dialog.showModal();
-    const box = svg.viewBox.baseVal;
+    const box = isTable ? {width:700,height:280} : svg.viewBox.baseVal;
+    if(isTable)detail.hidden=true;
     let scale = 1, baseWidth = Math.max(viewport.clientWidth, 320), selected = -1;
     let moved = false, pointers = new Map(), gesture = null;
     function zoom(next, cx = viewport.clientWidth / 2, cy = viewport.clientHeight / 2) {
@@ -368,8 +437,9 @@
       const left = (viewport.scrollLeft + cx) * ratio - cx;
       const top = (viewport.scrollTop + cy) * ratio - cy;
       scale = next;
-      svg.style.width = baseWidth * scale + 'px';
-      svg.style.height = baseWidth * scale * box.height / box.width + 'px';
+      svg.style.width = (isTable?Math.max(baseWidth,700):baseWidth) * scale + 'px';
+      svg.style.height = isTable ? 'auto' : baseWidth * scale * box.height / box.width + 'px';
+      if(isTable)svg.style.fontSize=13*scale+'px';
       viewport.scrollLeft = left; viewport.scrollTop = top;
       dialog.querySelector('output').textContent = Math.round(scale * 100) + '%';
       dialog.querySelector('[data-chart-out]').disabled = scale === 1;
@@ -397,7 +467,7 @@
     dialog.querySelector('[data-chart-out]').onclick = () => zoom(scale / 1.5);
     dialog.querySelector('[data-chart-reset]').onclick = () => { zoom(1); viewport.scrollLeft = viewport.scrollTop = 0; };
     viewport.addEventListener('click', event => {
-      if (moved) return;
+      if (moved || isTable) return;
       const hit = event.target.closest('[data-sample-detail]');
       if (hit && samples.includes(hit)) { select(samples.indexOf(hit)); return; }
       const rect = svg.getBoundingClientRect();
@@ -410,7 +480,7 @@
       if (nearest >= 0) select(nearest);
     });
     viewport.addEventListener('keydown', event => {
-      if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      if (!isTable && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
         event.preventDefault(); select(selected < 0 ? 0 : selected + (event.key === 'ArrowRight' ? 1 : -1));
         samples[selected]?.scrollIntoView({block:'nearest', inline:'nearest'});
       }
@@ -457,7 +527,7 @@
   }
   document.addEventListener('click', event => {
     const source = event.target.closest(chartSelector);
-    if (!source || source.closest('.chart-viewer')) return;
+    if (!source || source.closest('.chart-viewer') || event.target.closest('a,button,input,select,textarea,label')) return;
     event.preventDefault(); event.stopImmediatePropagation(); openChart(source);
   }, true);
   document.addEventListener('keydown', event => {

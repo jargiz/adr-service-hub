@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Search device lists by manufacturer, hostname, MAC (with or without separators), or IP. Sort by numeric IP, manufacturer, hostname, or MAC; keep unknown identities last and selections through refresh.
+- Tighten mobile device cards while retaining every field and web link.
+- Open every table and chart, including gauges, in the enlarged viewer. Device-table search/sort remains available there; web links still open normally and inspection never submits controls.
+
 - Remove routine diagnostic/discovery explanations from the dashboard; show counts, scan time, and device results. Raw report details remain available.
 
 - Simplify Internet speed history. Show large Download/Upload values for a single test, retain timelines for multiple tests, use a compact period control, and remove repeated explanations.

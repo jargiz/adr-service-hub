@@ -28,7 +28,7 @@ def gauge(label, value):
     text = f'{value:g}%'
     angle=math.pi*(1-value/100)
     x,y=80+math.cos(angle)*53,88-math.sin(angle)*53
-    return ('<div class="gauge"><svg viewBox="0 0 160 145" role="img" aria-label="' + esc(label + ': ' + text) + '">'
+    return ('<div class="gauge"><svg tabindex="0" aria-haspopup="dialog" viewBox="0 0 160 145" role="img" aria-label="' + esc(label + ': ' + text) + '">'
         '<title>' + esc(label + ': ' + text) + '</title><path d="M18 88 A62 62 0 0 1 142 88" class="gauge-track"/>'
         '<path d="M18 88 A62 62 0 0 1 142 88" class="gauge-fill" pathLength="100" stroke-dasharray="' + str(value) + ' 100"/>'
         f'<path d="M80 88L{x:.2f} {y:.2f}" class="gauge-needle"/>'

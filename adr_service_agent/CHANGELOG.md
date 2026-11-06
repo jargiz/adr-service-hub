@@ -1,24 +1,14 @@
-## Unreleased
+## 0.28.0
 
-- Search device lists by manufacturer, hostname, MAC (with or without separators), or IP. Sort by numeric IP, manufacturer, hostname, or MAC; keep unknown identities last and selections through refresh.
-- Tighten mobile device cards while retaining every field and web link.
-- Open every table and chart, including gauges, in the enlarged viewer. Device-table search/sort remains available there; web links still open normally and inspection never submits controls.
-
-- Remove routine diagnostic/discovery explanations from the dashboard; show counts, scan time, and device results. Raw report details remain available.
-
-- Simplify Internet speed history. Show large Download/Upload values for a single test, retain timelines for multiple tests, use a compact period control, and remove repeated explanations.
-
-- Use Network Monitoring, Start monitoring, and Stop monitoring in visible labels; retain the existing 24-hour collection limit.
-
-- Move Connections to a dedicated navigation view and show Ask ADR only on Overview.
-- Replace the UPS observation chart with a compact reported-state card and a recent power-event list. Keep routine baselines and reconnections in collapsed monitoring activity; distinguish source event time from receipt time.
-
-- Tap or press Enter on any history graph to open an enlarged screen with local timestamps, exact recorded sample details, pinch zoom, pan, +/− controls, and Reset zoom.
-- Cover ping latency, packet loss, Internet speed, WattBox, UPS, and sensor history using one local viewer. Preserve the displayed period and visible series when opening.
-- Close or Escape returns focus to the original graph. The viewer retains its opening snapshot while dashboard collection and refresh continue.
-- Add exact timestamp/value inspection to sensor and UPS history without adding dot markers or connecting missing data.
-- No device requests, configuration changes, monitoring schedule changes, or automatic restarts. Install only after the active 24-hour ping trial finishes.
-- Validation: Python suite, existing JavaScript checks, and desktop/mobile Chromium interaction tests including touch pinch.
+- Search devices by manufacturer, hostname, MAC, IP, or device type. Sort by numeric IP, manufacturer, hostname, or MAC; keep unknown identities last.
+- Make mobile device cards smaller while retaining every field and web link.
+- Tap tables, history graphs, and gauges to enlarge them. Zoom, pan, inspect recorded samples, and close the viewer to return. Search and sort device tables in the enlarged view.
+- Give Connections its own navigation view and keep Ask ADR on Overview only.
+- Replace the UPS observation graph with a compact status card and power-event list. Collapse routine monitoring activity and retain separate reported/received times.
+- Show Download and Upload values for a single speed test; use a timeline for multiple tests. Simplify headings and period controls.
+- Remove routine explanatory blocks from diagnostics and discovery. Use monitoring instead of trial in visible labels.
+- Keep the existing 24-hour ping limit and collection behavior. Updating restarts the app and ends active monitoring; downloaded results remain available.
+- Validation: 399 Python tests and JavaScript filtering, navigation, history-control, and unified UI checks passed. Mobile visual verification of the final layout and table viewer remains pending.
 
 ## 0.27.1
 

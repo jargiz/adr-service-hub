@@ -1,5 +1,5 @@
 name: ADR Service Agent
-version: 0.27.1
+version: 0.28.0
 slug: adr_service_agent
 description: Unified monitoring, network diagnostics, Ask ADR, and confirmed outlet
   controls.
@@ -128,4 +128,5 @@ ports:
   5514/udp: null
 ports_description:
   5514/udp: Native device syslog input (enable only on the client LAN)
+
 

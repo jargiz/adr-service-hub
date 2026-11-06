@@ -1,4 +1,16 @@
-## Current release: 0.27.1
+## Current release: 0.28.0
+
+Device discovery now supports search and sorting, with smaller mobile cards.
+Tap tables, graphs, and gauges for an enlarged view with zoom and Close.
+Connections has a dedicated view, and Ask ADR appears only on Overview.
+UPS history uses a compact status and event list. A single speed test shows
+Download/Upload values instead of an empty timeline. Dashboard wording is shorter.
+
+Update ADR Service Agent in the app store, then reopen the dashboard. Updating
+restarts the app and ends active monitoring. The ping session still stops after
+24 hours; continuous monitoring is not part of this release.
+
+## Previous release: 0.27.1
 
 Bluesound now counts individual audio players as zones, separately from sensors,
 integration entries and physical hardware. The expanded tile lists each zone and
@@ -750,3 +762,4 @@ installation checks; they were not performed from the development environment.
 
 
 USB/NUT monitoring in the 0.24.0 draft adds persistent power transition evidence to Ask ADR. See `adr_service_agent/DOCS.md` for configuration and live acceptance requirements.
+

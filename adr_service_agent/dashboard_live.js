@@ -320,3 +320,147 @@
 })();
 
 
+
+
+
+// Chart inspection is entirely local. Never fetch data or submit device actions.
+(() => {
+  const chartSelector = 'svg.trend-chart, svg.history-chart';
+  let viewer = null;
+  function openChart(source) {
+    if (viewer) return;
+    const card = source.closest('.trial-chart, .trend-card, .sense-series');
+    const dialog = document.createElement('dialog');
+    dialog.className = 'chart-viewer';
+    dialog.setAttribute('aria-labelledby', 'chart-viewer-title');
+    dialog.innerHTML = '<header><h2 id="chart-viewer-title"></h2><button type="button" data-chart-close aria-label="Close enlarged graph">Close</button></header><div class="chart-viewer-tools"><button type="button" data-chart-out aria-label="Zoom out">−</button><output aria-live="polite">100%</output><button type="button" data-chart-in aria-label="Zoom in">+</button><button type="button" data-chart-reset>Reset zoom</button></div><p class="chart-viewer-help">Pinch or use + / − to zoom. Drag to pan. Tap for a recorded reading; use arrow keys to step through samples.</p><div class="chart-viewer-legend"></div><div class="chart-viewer-viewport" tabindex="0" aria-label="Enlarged graph"><div class="chart-viewer-canvas"></div></div><p class="chart-viewer-detail" role="status">Showing the recorded graph at the time it was opened.</p>';
+    dialog.querySelector('h2').textContent = card?.querySelector('h4')?.textContent || source.getAttribute('aria-label') || 'History';
+    const legend = source.parentElement.querySelector('.trend-legend') || card?.querySelector('.trend-legend');
+    if (legend) dialog.querySelector('.chart-viewer-legend').append(legend.cloneNode(true));
+    const svg = source.cloneNode(true);
+    svg.removeAttribute('tabindex');
+    svg.removeAttribute('data-trial-chart');
+    svg.removeAttribute('aria-haspopup');
+    svg.removeAttribute('id');
+    svg.setAttribute('role', 'img');
+    const viewport = dialog.querySelector('.chart-viewer-viewport');
+    const canvas = dialog.querySelector('.chart-viewer-canvas');
+    const detail = dialog.querySelector('.chart-viewer-detail');
+    canvas.append(svg);
+    document.body.append(dialog);
+    viewer = dialog;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialog.addEventListener('close', () => {
+      document.body.style.overflow = oldOverflow;
+      viewer = null;
+      dialog.remove();
+      if (source.isConnected) source.focus({preventScroll:true});
+    });
+    dialog.showModal();
+    const box = svg.viewBox.baseVal;
+    let scale = 1, baseWidth = Math.max(viewport.clientWidth, 320), selected = -1;
+    let moved = false, pointers = new Map(), gesture = null;
+    function zoom(next, cx = viewport.clientWidth / 2, cy = viewport.clientHeight / 2) {
+      next = Math.max(1, Math.min(8, next));
+      const ratio = next / scale;
+      const left = (viewport.scrollLeft + cx) * ratio - cx;
+      const top = (viewport.scrollTop + cy) * ratio - cy;
+      scale = next;
+      svg.style.width = baseWidth * scale + 'px';
+      svg.style.height = baseWidth * scale * box.height / box.width + 'px';
+      viewport.scrollLeft = left; viewport.scrollTop = top;
+      dialog.querySelector('output').textContent = Math.round(scale * 100) + '%';
+      dialog.querySelector('[data-chart-out]').disabled = scale === 1;
+      dialog.querySelector('[data-chart-in]').disabled = scale === 8;
+    }
+    zoom(1);
+    const resize = () => { baseWidth = Math.max(viewport.clientWidth, 320); zoom(scale); };
+    addEventListener('resize', resize, {passive:true});
+    dialog.addEventListener('close', () => removeEventListener('resize', resize));
+    const samples = [...svg.querySelectorAll('[data-sample-detail]')].filter(p => !p.closest('[style*="display: none"], [hidden]')).sort((a,b) => Number(a.getAttribute('x'))-Number(b.getAttribute('x')));
+    function select(index) {
+      if (!samples.length) return;
+      selected = Math.max(0, Math.min(samples.length - 1, index));
+      const sample = samples[selected];
+      detail.textContent = sample.dataset.sampleDetail;
+      svg.querySelector('.chart-selection')?.remove();
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const x = Number(sample.getAttribute('x')) + Number(sample.getAttribute('width')) / 2;
+      line.setAttribute('d', `M${x} 18V${box.height - 30}`);
+      line.setAttribute('class', 'chart-selection');
+      svg.append(line);
+    }
+    dialog.querySelector('[data-chart-close]').onclick = () => dialog.close();
+    dialog.querySelector('[data-chart-in]').onclick = () => zoom(scale * 1.5);
+    dialog.querySelector('[data-chart-out]').onclick = () => zoom(scale / 1.5);
+    dialog.querySelector('[data-chart-reset]').onclick = () => { zoom(1); viewport.scrollLeft = viewport.scrollTop = 0; };
+    viewport.addEventListener('click', event => {
+      if (moved) return;
+      const hit = event.target.closest('[data-sample-detail]');
+      if (hit && samples.includes(hit)) { select(samples.indexOf(hit)); return; }
+      const rect = svg.getBoundingClientRect();
+      const x = box.x + (event.clientX - rect.left) / rect.width * box.width;
+      let nearest = -1, distance = Infinity;
+      samples.forEach((p, i) => {
+        const dx = Math.abs(Number(p.getAttribute('x')) + Number(p.getAttribute('width')) / 2 - x);
+        if (dx < distance) { distance = dx; nearest = i; }
+      });
+      if (nearest >= 0) select(nearest);
+    });
+    viewport.addEventListener('keydown', event => {
+      if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+        event.preventDefault(); select(selected < 0 ? 0 : selected + (event.key === 'ArrowRight' ? 1 : -1));
+        samples[selected]?.scrollIntoView({block:'nearest', inline:'nearest'});
+      }
+      if (event.key === '+' || event.key === '=') { event.preventDefault(); zoom(scale * 1.5); }
+      if (event.key === '-') { event.preventDefault(); zoom(scale / 1.5); }
+    });
+    function beginGesture() {
+      const points = [...pointers.values()];
+      gesture = {points, left:viewport.scrollLeft, top:viewport.scrollTop, scale,
+        distance:points.length === 2 ? Math.hypot(points[1].x-points[0].x, points[1].y-points[0].y) : 0};
+    }
+    viewport.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      if (!pointers.size) moved = false;
+      pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+      if (pointers.size > 1) moved = true;
+      // Keep sample hit targets for taps; capture only after movement.
+      beginGesture();
+    });
+    viewport.addEventListener('pointermove', event => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+      const points = [...pointers.values()];
+      if (points.length === 2 && gesture.distance > 0) {
+        moved = true; viewport.setPointerCapture(event.pointerId);
+        const rect = viewport.getBoundingClientRect();
+        zoom(gesture.scale * Math.hypot(points[1].x-points[0].x, points[1].y-points[0].y) / gesture.distance,
+          (points[0].x+points[1].x)/2-rect.left, (points[0].y+points[1].y)/2-rect.top);
+      } else if (points.length === 1 && gesture.points.length === 1) {
+        const dx = points[0].x - gesture.points[0].x, dy = points[0].y - gesture.points[0].y;
+        if (Math.hypot(dx,dy) > 5) moved = true;
+        if (moved) { viewport.setPointerCapture(event.pointerId); viewport.scrollLeft = gesture.left-dx; viewport.scrollTop = gesture.top-dy; }
+      }
+    });
+    for (const name of ['pointerup','pointercancel','lostpointercapture']) viewport.addEventListener(name, event => {
+      pointers.delete(event.pointerId); beginGesture();
+    });
+    viewport.addEventListener('wheel', event => {
+      if (!event.ctrlKey) return;
+      event.preventDefault(); const rect = viewport.getBoundingClientRect();
+      zoom(scale * Math.exp(-event.deltaY * .01), event.clientX-rect.left, event.clientY-rect.top);
+    }, {passive:false});
+    dialog.querySelector('[data-chart-close]').focus();
+  }
+  document.addEventListener('click', event => {
+    const source = event.target.closest(chartSelector);
+    if (!source || source.closest('.chart-viewer')) return;
+    event.preventDefault(); event.stopImmediatePropagation(); openChart(source);
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (!event.target.matches(chartSelector) || !['Enter',' '].includes(event.key)) return;
+    event.preventDefault(); openChart(event.target);
+  });
+})();

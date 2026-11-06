@@ -45,7 +45,7 @@ def chart(current, samples, key, title, unit):
     ceiling = 100 if unit == '%' else max(5, math.ceil(max(valid)/5)*5)
     try:zone=ZoneInfo(site_timezone_name())
     except (ZoneInfoNotFoundError,ValueError):zone=ZoneInfo('UTC')
-    output += '<svg class="trend-chart" viewBox="0 0 600 260" role="group" tabindex="0" data-trial-chart aria-label="'+title+'; use left and right arrows for sample details"><title>'+title+'</title>'
+    output += '<svg class="trend-chart" tabindex="0" aria-haspopup="dialog" viewBox="0 0 600 260" role="group" data-trial-chart aria-label="'+title+'; use left and right arrows for sample details"><title>'+title+'</title>'
     for index in range(5):
         yy = 40 + index*40
         output += f'<path d="M64 {yy}H576" class="chart-grid"/><text x="55" y="{yy+4}" text-anchor="end">{ceiling*(4-index)/4:g}</text>'
@@ -94,7 +94,7 @@ def chart(current, samples, key, title, unit):
     output += '</svg><div class="trend-legend">'
     for index, target in enumerate(current['targets']):
         output += '<span class="trend-color-'+str(index)+'"><i></i>'+esc(target[0])+'</span>'
-    output += '</div><p class="trial-selected-sample" data-trial-detail data-trial-session="'+esc(current.get('id',''))+'" role="status">Tap the graph for the exact sample time and readings.</p><p class="report-caption">'+esc(display_time(stamp(first)))+' — '+esc(display_time(stamp(last)))+' · '+unit+'</p></section>'
+    output += '</div><p class="trial-selected-sample" data-trial-detail data-trial-session="'+esc(current.get('id',''))+'" role="status">Tap the graph to enlarge it, zoom, and inspect exact sample times and readings.</p><p class="report-caption">'+esc(display_time(stamp(first)))+' — '+esc(display_time(stamp(last)))+' · '+unit+'</p></section>'
     return output
 
 
@@ -133,3 +133,4 @@ def panel(trial, csrf):
     output += '<p class="report-caption">History is retained for seven days, up to 10,080 samples and 32 trials. Charts show the latest trial; the download includes all retained trials. Stop keeps history. An app restart ends the trial; start a new trial to collect again. A ping batch already in progress may take up to nine seconds to finish.</p>'
     output += '<p class="report-caption">ADR speed tests are paused during the trial and resume on the existing schedule afterward. System checks continue. Other apps can still run their own tests. ICMP can be filtered or deprioritized; missed replies do not prove an ISP fault. These are endpoint samples, without per-hop route tracing.</p>'
     return output+'</div></details></article>'
+

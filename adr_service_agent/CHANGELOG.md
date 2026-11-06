@@ -1,3 +1,12 @@
+## Unreleased
+
+- Tap or press Enter on any history graph to open an enlarged screen with local timestamps, exact recorded sample details, pinch zoom, pan, +/− controls, and Reset zoom.
+- Cover ping latency, packet loss, Internet speed, WattBox, UPS, and sensor history using one local viewer. Preserve the displayed period and visible series when opening.
+- Close or Escape returns focus to the original graph. The viewer retains its opening snapshot while dashboard collection and refresh continue.
+- Add exact timestamp/value inspection to sensor and UPS history without adding dot markers or connecting missing data.
+- No device requests, configuration changes, monitoring schedule changes, or automatic restarts. Install only after the active 24-hour ping trial finishes.
+- Validation: Python suite, existing JavaScript checks, and desktop/mobile Chromium interaction tests including touch pinch.
+
 ## 0.27.1
 
 - Count Bluesound audio zones by media-player entity rather than all readings or hardware devices. Multiple zones sharing one device or integration remain separate.
@@ -456,3 +465,4 @@
 - Initial experimental WattBox connector with ingress UI, SSH identity pinning,
   outlet inventory, confirmed single-outlet RESET, cooldown and power verification.
 - Hardware build and live integration testing remain pending.
+

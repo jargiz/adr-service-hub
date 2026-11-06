@@ -265,7 +265,7 @@ def panels(hub, csrf):
 <div class="toolbar"><button type="button" data-diagnostic="check">Check connectivity</button><select id="diag-subnet" aria-label="Discovery subnet">'''+subnets+'''</select><button type="button" data-diagnostic="discover">Discover devices</button></div>
 <p id="diag-summary"></p><div class="diagnostic-table"><table><thead><tr><th>Target</th><th>Ping</th><th>Latency</th></tr></thead><tbody id="diag-targets"></tbody></table></div><p id="diag-discovery"></p>
 <div class="diagnostic-table discovered-devices"><table><thead><tr><th>Manufacturer</th><th>IP address</th><th>Hostname</th><th>MAC address</th><th>Device type</th><th>Identity source</th><th>Web interface</th></tr></thead><tbody id="diag-devices"></tbody></table></div>
-<p class="report-caption">Unknown fields could not be identified. After Discover devices, that subnet refreshes every 20 minutes while automatic monitoring is enabled. Busy checks defer the next scan. Web links open on your device and require access to the local network. HTTPS may show the device's certificate warning. An open port does not verify a usable management page.</p>
+<p class="report-caption">Refreshes every 20 minutes while automatic monitoring is enabled.</p>
 <details id="diagnostic-observed"><summary>Observed devices</summary><div class="diagnostic-table"><table><thead><tr><th>Manufacturer</th><th>IP address</th><th>Hostname</th><th>MAC address</th><th>Identity checked</th><th>Last reply</th></tr></thead><tbody id="diag-observed"></tbody></table></div></details></section>'''
     assistant='''<section id="ask-adr"><h2>Ask ADR</h2><p id="adr-native-status" role="status"></p><details id="adr-native-history"><summary>Native device events</summary><div id="adr-native-sources"></div><div id="adr-native-list"></div><label for="adr-native-source">Log source</label><select id="adr-native-source"></select><input id="adr-native-file" type="file" accept="text/plain,.txt,.log"><button type="button" id="adr-native-import">Import log</button><p id="adr-native-import-status" role="status"></p></details><form id="adr-question-form"><input type="hidden" id="diag-csrf" value="'''+esc(csrf)+'''">
 <label for="adr-question">Question</label><textarea id="adr-question" maxlength="1000" placeholder="What needs attention?" rows="3"></textarea>
@@ -275,4 +275,5 @@ def panels(hub, csrf):
 <p id="adr-transcript"></p><button type="button" id="adr-use-transcript" hidden>Use transcript</button><p id="adr-voice-status" role="status" aria-live="polite"></p></form>
 <div class="toolbar voice-output"><button type="button" id="adr-read-answer">Read answer</button><button type="button" id="adr-stop-reading">Stop reading</button></div><p id="adr-analysis-progress" role="status"></p><div id="adr-answer" aria-live="polite"></div></section>'''
     return network,assistant
+
 

@@ -32,15 +32,15 @@ class TrendChartTests(unittest.TestCase):
         output=trend_chart([self.series('<script>x</script>',[(0,781)])], 'Green Ookla <history>','Mbit/s')
         self.assertNotIn('<script>',output);self.assertIn('&lt;history&gt;',output)
         self.assertIn('781 Mbit/s',output)
-    def test_ups_uses_observation_bars_without_joining_unknown_intervals(self):
+    def test_ups_uses_event_list_without_inventing_continuous_power(self):
         events=[{'received_at':'2026-11-04T03:00:00+00:00','state':'line_power','kind':'baseline'},
                 {'received_at':'2026-11-04T04:00:00+00:00','state':'unverified','kind':'monitoring_gap'},
                 {'received_at':'2026-11-04T05:00:00+00:00','state':'on_battery','kind':'on_battery'}]
         output=ups_panel({'enabled':True,'status':'reported','current':'on_battery','events':events})
-        self.assertEqual(output.count('class="state-observation"'),2)
-        self.assertIn('state-unknown-rail',output)
+        self.assertNotIn('<svg class="history-chart"',output)
+        self.assertIn('Switched to battery',output)
         self.assertNotIn('class="chart-point"',output);self.assertNotIn('class="chart-line"',output)
-        self.assertIn('unobserved time',output)
+        self.assertIn('Monitoring gap',output)
 
     def test_speed_timeline_keeps_both_series_and_dated_times_without_point_markers(self):
         output=network_history_charts([
@@ -59,9 +59,10 @@ class TrendChartTests(unittest.TestCase):
     def test_single_test_timestamp_is_not_repeated_or_drawn_as_continuous_line(self):
         output=network_history_charts([
             self.series('Download',[(0,900)]),self.series('Upload',[(0,800)])],'Green')
-        self.assertEqual(output.count('class="timeline-time"'),3)  # one per period
+        self.assertNotIn('class="timeline-time"',output)
+        self.assertIn('class="speed-latest"',output)
         self.assertNotIn('class="trend-line"',output)
-        self.assertIn('at least two recorded tests',output)
+        self.assertIn('More recorded tests will add a timeline.',output)
 
     def test_empty_duplicate_placeholder_cannot_hide_recorded_upload(self):
         output=network_history_charts([
@@ -74,4 +75,5 @@ class TrendChartTests(unittest.TestCase):
         self.assertEqual(output.count('data-trend-card'),1)
 
 if __name__=='__main__':unittest.main()
+
 

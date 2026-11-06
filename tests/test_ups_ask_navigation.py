@@ -46,7 +46,7 @@ class UpsAskTests(unittest.TestCase):
         self.assertIn('Event time unreported',output)
         self.assertNotIn('Reported Nov',output)
 
-    def test_single_ask_form_tile_and_bottom_link_even_during_first_check(self):
+    def test_single_overview_ask_form_and_dedicated_connections_navigation(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);options=root/'options.json';options.write_text('{}')
             pilot=Pilot(root,options)
@@ -58,8 +58,9 @@ class UpsAskTests(unittest.TestCase):
                 self.assertEqual(elements.ids.count('ups-results'),1)
                 self.assertTrue(any('ask-tile' in a.get('class','') and a.get('href')=='#ask-adr' for a in elements.links))
                 bottom=output.split('</main>',1)[1].split('</nav>',1)[0]
-                self.assertIn('class="ask-nav"',bottom)
-                self.assertIn('data-ask-shortcut',bottom)
+                self.assertNotIn('class="ask-nav"',bottom)
+                self.assertIn('for="view-connections"',bottom)
 
 
 if __name__=='__main__':unittest.main()
+

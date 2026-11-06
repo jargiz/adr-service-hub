@@ -614,7 +614,7 @@ class Pilot:
 
     def start_network_job(self, kind, scheduled=False, source='green'):
         if kind == 'internet_test' and self.network_trial.running:
-            raise ProtocolError('Stop the network monitoring trial before running a speed test.')
+            raise ProtocolError('Stop network monitoring before running a speed test.')
         if kind not in ('internet_test', 'controller'):
             raise ProtocolError('Unsupported network check.')
         if any((self.service_running, self.internet_test_running, self.controller_running, self.active, self.araknis_running, self.cp4_running, self.crestron_running, self.control4_running, self.bluesound_running, self.sense_running)):
@@ -1129,7 +1129,7 @@ def page(pilot, confirmation=None, candidate=None, error=None):
     elif (pilot.monitor_active or pilot.network_trial.running) and not pilot.power_pending and not pilot.gateway_candidate and not confirmation and not candidate and not pilot.controller_candidate and not pilot.monitoring_busy():
         text += '<meta name="adr-refresh" content="60">'
     text += '<meta name="adr-site-timezone" content="'+esc(site_timezone_name())+'">'
-    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV/Automation</span></label><a href="#ask-adr" data-ask-shortcut>{icon("ask")}<span>Ask ADR</span></a><a href="#history">History</a><a href="#connections">Connections</a></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.27.1</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div></header>'
+    text += f'<title>ADR Service Agent</title><style>{CSS}</style><aside class="sidebar"><div class="brand"><img class="adr-brand-logo" src="data:image/jpeg;base64,{LOGO_DATA}" alt="ADR Media Integrators"></div><nav aria-label="Dashboard"><label for="view-all">{icon("home")}<span>Overview</span></label><label for="view-power">{icon("power")}<span>Power</span></label><label for="view-network">{icon("network")}<span>Network</span></label><label for="view-av">{icon("av")}<span>AV/Automation</span></label><a href="#ask-adr" data-ask-shortcut>{icon("ask")}<span>Ask ADR</span></a><a href="#history">History</a><label for="view-connections">{icon("settings")}<span>Connections</span></label></nav><div class="sidebar-footer">ADR Media Integrators<br>Local service console · 0.27.1</div></aside><main id="overview"><header class="page-header"><div><h1>Service overview</h1></div></header>'
     report = pilot.current_service_report()
     notice = error or pilot.result
     if report and not error and pilot.result.startswith('Ready.'):
@@ -1608,6 +1608,9 @@ def page(pilot, confirmation=None, candidate=None, error=None):
         extra = f'<input type="hidden" name="nonce" value="{esc(confirmation)}"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the device and outlet mapping.</label>'
         text += form('reboot', f'Reboot outlet {c["test_outlet"]} only', extra, True) + '</section>'
     text += '</details><p><small>ADR Media Integrators</small></p></main></html>'
+    # Keep pending connection approvals visible after a form response.
+    if any((confirmation, candidate, pilot.gateway_candidate, pilot.araknis_candidate, pilot.cp4_candidate, pilot.controller_candidate)):
+        text = text.replace('id="view-all" checked', 'id="view-all"').replace('id="view-connections"', 'id="view-connections" checked')
     return finish_page(text)
 
 
@@ -2051,5 +2054,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 

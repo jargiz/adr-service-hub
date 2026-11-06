@@ -17,10 +17,10 @@
   });
   const storageKey = 'adr-view:' + location.pathname;
   const main = document.querySelector('main');
-  const views = ['all', 'power', 'network', 'av'];
+  const views = ['all', 'power', 'network', 'av', 'connections'];
   try {
     const saved = sessionStorage.getItem(storageKey);
-    if (views.includes(saved)) {
+    if (views.includes(saved) && !document.getElementById('view-connections')?.defaultChecked) {
       const selected = document.getElementById('view-' + saved);
       if (selected) selected.checked = true;
     }
@@ -78,6 +78,7 @@
     const detail=event.target.closest('.trial-chart')?.querySelector('[data-trial-detail]');
     if(detail)detail.textContent=points[index].dataset.sampleDetail;
   });
+  if(document.getElementById('view-connections')?.checked)summaryFilter='';
   if(summaryFilter){const all=document.getElementById('view-all');if(all)all.checked=true;}
   applySummaryFilter();
 
@@ -280,7 +281,7 @@
       diag('adr-answer').textContent=state.answer;
       diagnosticRows('diag-targets',(result.targets||[]).map(t=>[t.ip,t.ping.status==='responded'?'Reply':t.ping.status==='no_reply'?'No reply':'Unverified',t.ping.average_ms==null?'Unverified':t.ping.average_ms+' ms']));
       const discovery=state.discovery||(result.kind==='discovery'?result:{});
-      diag('diag-discovery').textContent=discovery.kind==='discovery'?discovery.responding.length+' replies / '+discovery.tested+' tested · '+localDate(discovery.checked_at)+'. Nonresponders remain unverified. '+(discovery.limitations||[]).join(' '):'';
+      diag('diag-discovery').textContent=discovery.kind==='discovery'?discovery.responding.length+' replies / '+discovery.tested+' tested · '+localDate(discovery.checked_at)+'':'';
       diagnosticRows('diag-devices',(discovery.devices||[]).map(d=>[d.manufacturer||'Unknown',d.ip,d.hostname||'Unknown',d.mac||'Unknown',d.device_type||'Unknown',d.identity_source||'Unknown',{ip:d.ip,web:d.services||[]} ]));
       diagnosticRows('diag-observed',(state.observed||[]).map(d=>[d.manufacturer||'Unknown',d.ip,d.hostname||'Unknown',d.mac||'Unknown',localDate(d.identity_checked_at),localDate(d.last_seen)]));
       document.querySelectorAll('button[data-diagnostic]').forEach(b=>{b.disabled=state.blocked||state.busy||diagnosticSubmitting||Boolean(window.ADRVoice?.busy())||(b.dataset.diagnostic==='ask'?!state.cloud_enabled:!state.enabled);});

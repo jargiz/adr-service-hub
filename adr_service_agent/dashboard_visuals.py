@@ -223,7 +223,7 @@ def trend_chart(series_list, title, unit, timeline=False):
         rows.append((label,points))
     valid=[(t,v) for _,points in rows for t,v in points if v is not None]
     default='day' if timeline else 'week'
-    output='<section class="trend-card'+(' speed-timeline' if timeline else '')+'" data-trend-card="'+esc(title)+'"><header><h4>'+esc(title)+'</h4><div class="trend-controls">'+('<select data-trend-series hidden aria-label="Both speed series">' if timeline else '<label>Show <select data-trend-series>')+'<option value="all">All readings</option>'
+    output='<section class="trend-card'+(' speed-timeline' if timeline else '')+'" data-trend-card="'+esc(title)+'"><header><h4>'+esc('Internet speed' if timeline else title)+'</h4>'+('<small class="trend-source">'+esc(title.removesuffix(' Internet test history'))+'</small>' if timeline else '')+'<div class="trend-controls">'+('<select data-trend-series hidden aria-label="Both speed series">' if timeline else '<label>Show <select data-trend-series>')+'<option value="all">All readings</option>'
     for i,(label,_) in enumerate(rows):output+='<option value="'+str(i)+'">'+esc(label)+'</option>'
     output+='</select>'+('' if timeline else '</label>')+'<label>Period <select data-trend-range><option value="week">Week</option><option value="day"'+(' selected' if timeline else '')+'>24 hours</option><option value="all">All recorded</option></select></label></div></header>'
     if not valid:return output+'<p class="empty-state">Awaiting recorded '+esc(title.lower())+' results.</p></section>'
@@ -233,7 +233,21 @@ def trend_chart(series_list, title, unit, timeline=False):
         maximum=max([v for _,v in selected]+[1]); ceiling=math.ceil(maximum/5)*5 if maximum<=20 else math.ceil(maximum/100)*100
         def x(t):return 320 if last==start else 64+(t-start)/(last-start)*512
         def y(v):return 200-v/ceiling*160
-        output+='<div data-trend-window="'+key+'"'+(' hidden' if key!=default else '')+'><div class="trend-legend">'
+        output+='<div data-trend-window="'+key+'"'+(' hidden' if key!=default else '')+'>'
+        window_rows = [(label, [(t,v) for t,v in points if start<=t<=last and v is not None]) for label,points in rows]
+        if timeline and all(len(points)<=1 for _,points in window_rows):
+            output += '<div class="speed-latest">'
+            for i,(label,points) in enumerate(window_rows):
+                output += '<div class="speed-reading trend-color-'+str(i%4)+'"><span>'+esc(label)+'</span>'
+                if points:
+                    at,reading = points[-1]
+                    output += '<strong>'+f'{reading:g}'+'<small> Mbps</small></strong><time>'+esc(datetime.fromtimestamp(at,zone).strftime('%b %d · %I:%M %p %Z'))+'</time>'
+                else:
+                    output += '<strong class="speed-missing">Unavailable</strong>'
+                output += '</div>'
+            output += '</div><p class="speed-hint">More recorded tests will add a timeline.</p></div>'
+            continue
+        output+='<div class="trend-legend">'
         for i,(label,_) in enumerate(rows):output+='<span data-trend-item="'+str(i)+'" class="trend-color-'+str(i%4)+'"><i></i>'+esc(label)+'</span>'
         output+='</div><svg class="trend-chart" tabindex="0" aria-haspopup="dialog" viewBox="0 0 600 280" role="img" aria-label="'+esc(title)+'"><title>'+esc(title)+'</title><text x="64" y="22">'+esc(unit)+'</text>'
         for i in range(6):
@@ -273,9 +287,10 @@ def trend_chart(series_list, title, unit, timeline=False):
             output+='</g>'
         output+='</svg><small>'+esc(unit)+' · '+str(len(selected))+' recorded readings · '+esc(datetime.fromtimestamp(last,zone).strftime('%Z'))+'</small></div>'
     output+='<p class="trial-selected-sample" data-trial-detail data-trial-session="'+esc(title)+'" role="status">Tap the graph to enlarge it, zoom, and inspect measured values and test times.</p>'
-    if timeline and any(sum(v is not None for _,v in points)<2 for _,points in rows):
-        output+='<p class="report-caption">Each line needs at least two recorded tests. A single test is shown as a short bar at its measurement time.</p>'
-    output+='<p class="report-caption">Periods end at the latest recorded reading: '+esc(datetime.fromtimestamp(last,zone).strftime('%b %d · %I:%M %p %Z'))+'. Lines show trends between tests; long gaps and unavailable readings remain breaks.</p></section>'
+    if timeline:
+        output+='<p class="report-caption">Latest reading · '+esc(datetime.fromtimestamp(last,zone).strftime('%b %d · %I:%M %p %Z'))+'</p></section>'
+    else:
+        output+='<p class="report-caption">Periods end at the latest recorded reading: '+esc(datetime.fromtimestamp(last,zone).strftime('%b %d · %I:%M %p %Z'))+'. Lines show trends between tests; long gaps and unavailable readings remain breaks.</p></section>'
     return output
 
 

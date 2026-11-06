@@ -1,5 +1,14 @@
 ## Unreleased
 
+- Remove routine diagnostic/discovery explanations from the dashboard; show counts, scan time, and device results. Raw report details remain available.
+
+- Simplify Internet speed history. Show large Download/Upload values for a single test, retain timelines for multiple tests, use a compact period control, and remove repeated explanations.
+
+- Use Network Monitoring, Start monitoring, and Stop monitoring in visible labels; retain the existing 24-hour collection limit.
+
+- Move Connections to a dedicated navigation view and show Ask ADR only on Overview.
+- Replace the UPS observation chart with a compact reported-state card and a recent power-event list. Keep routine baselines and reconnections in collapsed monitoring activity; distinguish source event time from receipt time.
+
 - Tap or press Enter on any history graph to open an enlarged screen with local timestamps, exact recorded sample details, pinch zoom, pan, +/− controls, and Reset zoom.
 - Cover ping latency, packet loss, Internet speed, WattBox, UPS, and sensor history using one local viewer. Preserve the displayed period and visible series when opening.
 - Close or Escape returns focus to the original graph. The viewer retains its opening snapshot while dashboard collection and refresh continue.

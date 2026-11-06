@@ -209,7 +209,7 @@ def retain(history, result=None):
 
 def summary(result):
     if result.get('kind')=='discovery':
-        return str(len(result['responding']))+' addresses replied to this discovery. Nonresponders remain unverified.'
+        return str(len(result['responding']))+' addresses replied to this discovery.'
     if result.get('kind')!='target_checks':return 'Imported readings; see their original timestamps.'
     replies=sum(r['ping']['status']=='responded' for r in result['targets'])
     return str(replies)+' / '+str(len(result['targets']))+' targets replied. DNS '+result['dns']['status']+'.'
@@ -240,4 +240,5 @@ def import_report(raw):
             system['readings'] += [{k:scalar(row.get(k)) for k in ('name','state','unit','last_updated')} for row in s['internet_readings'][:16] if isinstance(row,dict)]
         output['systems'].append(system)
     return output
+
 
